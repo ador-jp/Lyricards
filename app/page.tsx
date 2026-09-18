@@ -9,7 +9,7 @@ import { extractWords, type Word } from '@/lib/vocabulary';
 
 type Song = { trackId: number; trackName: string; artistName: string; artworkUrl100: string; trackViewUrl: string };
 type Entry = { id: string; song: string; artist: string; words: Word[]; createdAt: string };
-const STORAGE_KEY = 'lylicards.entries';
+const STORAGE_KEY = 'lyricards.entries';
 
 export default function Home() {
   const [query, setQuery] = useState('');
@@ -18,7 +18,7 @@ export default function Home() {
   const [lyrics, setLyrics] = useState('');
   const [entries, setEntries] = useState<Entry[]>(() => {
     if (typeof window === 'undefined') return [];
-    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || localStorage.getItem('lyricbook.entries') || '[]'); } catch { return []; }
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || localStorage.getItem('lylicards.entries') || localStorage.getItem('lyricbook.entries') || '[]'); } catch { return []; }
   });
   const [status, setStatus] = useState('');
   const [excludeLearned, setExcludeLearned] = useState(true);
@@ -107,12 +107,12 @@ export default function Home() {
     const csv = rows.map(row => row.map(v => `"${v.replaceAll('"', '""')}"`).join(',')).join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
-    a.download = 'lylicards.csv'; a.click(); URL.revokeObjectURL(a.href);
+    a.download = 'lyricards.csv'; a.click(); URL.revokeObjectURL(a.href);
   }
 
   return <main className="min-h-screen bg-background text-foreground">
     <header className="border-b border-border/70 bg-card/80 backdrop-blur"><div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4">
-      <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-primary text-primary-foreground"><Music2 size={20}/></span><div><h1 className="text-lg font-bold tracking-tight">Lylicards</h1><p className="text-xs text-muted-foreground">歌からつくる、自分だけの単語帳</p></div></div><span className="rounded-full bg-accent px-3 py-1 text-xs font-medium text-accent-foreground">MVP</span>
+      <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-primary text-primary-foreground"><Music2 size={20}/></span><div><h1 className="text-lg font-bold tracking-tight">Lyricards</h1><p className="text-xs text-muted-foreground">歌からつくる、自分だけの単語帳</p></div></div><span className="rounded-full bg-accent px-3 py-1 text-xs font-medium text-accent-foreground">MVP</span>
     </div></header>
     <div className="mx-auto grid max-w-7xl gap-6 px-5 py-7 lg:grid-cols-[minmax(0,1fr)_360px]">
       <section className="space-y-6">

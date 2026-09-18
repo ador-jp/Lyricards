@@ -1,4 +1,4 @@
-# Lylicards MVP
+# Lyricards MVP
 
 楽曲名を検索し、利用権のある英語歌詞から頻出語と例文を作り、端末内へ蓄積してCSVでGoogle Sheetsへ移せる学習アプリです。
 

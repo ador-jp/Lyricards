@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Lylicards — 歌からつくる単語帳',
+  title: 'Lyricards — 歌からつくる単語帳',
   description: '楽曲から英単語と例文を抽出し、CSVやGoogle Sheetsへ蓄積する学習ツール',
 };
 
