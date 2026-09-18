@@ -17,11 +17,11 @@ export default function Home() {
   const [selected, setSelected] = useState<Song | null>(null);
   const [lyrics, setLyrics] = useState('');
   const [entries, setEntries] = useState<Entry[]>([]);
-  const [entriesReady, setEntriesReady] = useState(false);
   const [status, setStatus] = useState('');
   const [excludeLearned, setExcludeLearned] = useState(true);
   const [details, setDetails] = useState<Record<string, Partial<Word>>>({});
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const learned = useMemo(() => new Set(entries.flatMap(entry => entry.words.map(item => item.word.toLowerCase()))), [entries]);
   const baseWords = useMemo(() => extractWords(lyrics, excludeLearned ? learned : new Set()), [lyrics, excludeLearned, learned]);
   const words = useMemo(() => baseWords.map(item => ({ ...item, ...details[item.word], example: details[item.word]?.example || item.example })), [baseWords, details]);
@@ -34,7 +34,7 @@ export default function Home() {
     }).catch(() => {
       try { setEntries(JSON.parse(localStorage.getItem(STORAGE_KEY) || localStorage.getItem('lylicards.entries') || localStorage.getItem('lyricbook.entries') || '[]')); } catch { /* empty */ }
       setStatus('保存データを読み込めませんでした。新しい保存は再試行できます。');
-    }).finally(() => setEntriesReady(true));
+    });
   }, []);
 
   useEffect(() => {
@@ -88,13 +88,16 @@ export default function Home() {
   async function save() {
     if (!selected || !words.length) return setStatus('曲を選び、英語の歌詞を貼り付けてください。');
     const entry = { id: crypto.randomUUID(), song: selected.trackName, artist: selected.artistName, words, createdAt: new Date().toISOString() };
-    setStatus('保存中…');
+    setSaving(true); setStatus('保存中…');
     try {
       const response = await fetch('/api/entries', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(entry) });
       if (!response.ok) throw new Error();
-      setEntries(current => [entry, ...current]);
-      setStatus(`${words.length}語を保存しました。どの端末からも同じURLで確認できます。`);
-    } catch { setStatus('保存できませんでした。時間を置いてもう一度お試しください。'); }
+      setEntries(current => { const next = [entry, ...current]; localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); return next; });
+      setStatus(`${words.length}語を保存しました。`);
+    } catch {
+      setEntries(current => { const next = [entry, ...current]; localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); return next; });
+      setStatus('通信できなかったため、この端末に一時保存しました。CSVには出力できます。');
+    } finally { setSaving(false); }
   }
 
   function selectSong(song: Song) {
@@ -156,7 +159,7 @@ export default function Home() {
       <aside className="panel h-fit lg:sticky lg:top-6"><div className="step"><span>3</span><div><h2>単語帳にする</h2><p>全単語の意味と用例を取得します。</p></div></div>
         <Button variant="outline" onClick={fetchMeanings} disabled={!baseWords.length || loading} className="mt-5 h-11 w-full gap-2">{loading && <LoaderCircle className="animate-spin" size={16}/>}全{baseWords.length}語の意味・例文を取得</Button>
         <div className="mt-4 max-h-[52vh] min-h-44 space-y-2 overflow-y-auto pr-1">{words.length ? words.map(({word, meaning, meanings, partOfSpeech, example, exampleAuthor, exampleUrl}) => <div className="word" key={word}><div className="flex items-baseline gap-2"><strong>{word}</strong>{partOfSpeech && <small>{partOfSpeech}</small>}</div><ol className="meaning">{(meanings ?? [meaning ?? '']).filter(Boolean).map((item, index) => <li key={item}>{index + 1}. {item}</li>)}</ol><p>例: {example || '日常例文が見つかりませんでした'}</p>{exampleUrl && <a className="source" href={exampleUrl} target="_blank" rel="noreferrer">Tatoeba / {exampleAuthor || 'contributor'} · CC BY 2.0 FR</a>}</div>) : <div className="empty"><Sparkles size={26}/><p>歌詞を入力すると<br/>未学習の全単語が並びます</p></div>}</div>
-        <Button onClick={save} disabled={!entriesReady || !selected || !words.length || loading} className="mt-5 h-11 w-full">単語帳に保存</Button>{status && <p role="status" className="mt-3 text-sm text-muted-foreground">{status}</p>}
+        <Button onClick={save} disabled={!selected || !words.length || saving} className="mt-5 h-11 w-full">{saving ? '保存中…' : '単語帳に保存'}</Button>{status && <p role="status" className="mt-3 text-sm text-muted-foreground">{status}</p>}
         <div className="mt-6 border-t pt-5"><div className="flex items-center justify-between"><span className="text-sm font-semibold">保存済み</span><span className="text-sm text-muted-foreground">{entries.reduce((n, e) => n + e.words.length, 0)}語</span></div><Button variant="outline" onClick={downloadCsv} disabled={!entries.length && !words.length} className="mt-3 w-full gap-2"><Download size={16}/>CSVを書き出す</Button><p className="mt-2 text-xs leading-relaxed text-muted-foreground">未保存の解析結果もCSVに含めます。Google Sheetsでそのまま読み込めます。</p></div>
       </aside>
     </div>
