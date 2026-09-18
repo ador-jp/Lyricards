@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Download, ExternalLink, Music2, Search, Sparkles } from 'lucide-react';
+import { Download, ExternalLink, LoaderCircle, Music2, Search, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -20,7 +20,12 @@ export default function Home() {
     try { return JSON.parse(localStorage.getItem('lyricbook.entries') || '[]'); } catch { return []; }
   });
   const [status, setStatus] = useState('');
-  const words = useMemo(() => extractWords(lyrics), [lyrics]);
+  const [excludeLearned, setExcludeLearned] = useState(true);
+  const [details, setDetails] = useState<Record<string, Partial<Word>>>({});
+  const [loading, setLoading] = useState(false);
+  const learned = useMemo(() => new Set(entries.flatMap(entry => entry.words.map(item => item.word.toLowerCase()))), [entries]);
+  const baseWords = useMemo(() => extractWords(lyrics, excludeLearned ? learned : new Set()), [lyrics, excludeLearned, learned]);
+  const words = useMemo(() => baseWords.map(item => ({ ...item, ...details[item.word], example: details[item.word]?.example || item.example })), [baseWords, details]);
 
   useEffect(() => {
     if (query.trim().length < 2) { setSongs([]); return; }
@@ -80,8 +85,24 @@ export default function Home() {
     setStatus('曲を選択しました。歌詞の自動取得にはライセンス済みAPIの契約が必要です。');
   }
 
+  async function fetchMeanings() {
+    setLoading(true); setStatus(`0 / ${baseWords.length}語を取得中…`);
+    let done = 0;
+    for (let i = 0; i < baseWords.length; i += 5) {
+      const batch = await Promise.all(baseWords.slice(i, i + 5).map(async item => {
+        try {
+          const response = await fetch(`/api/dictionary?word=${encodeURIComponent(item.word)}`);
+          return response.ok ? await response.json() as Word : item;
+        } catch { return item; }
+      }));
+      setDetails(current => ({ ...current, ...Object.fromEntries(batch.map(item => [item.word, item])) }));
+      done += batch.length; setStatus(`${done} / ${baseWords.length}語を取得中…`);
+    }
+    setLoading(false); setStatus(`${baseWords.length}語の意味と例文を取得しました。`);
+  }
+
   function downloadCsv() {
-    const rows = [['曲名', 'アーティスト', '単語', '例文', '保存日時'], ...entries.flatMap(e => e.words.map(w => [e.song, e.artist, w.word, w.example, e.createdAt]))];
+    const rows = [['曲名', 'アーティスト', '単語', '品詞', '意味', '例文', '保存日時'], ...entries.flatMap(e => e.words.map(w => [e.song, e.artist, w.word, w.partOfSpeech ?? '', w.meaning ?? '', w.example, e.createdAt]))];
     const csv = rows.map(row => row.map(v => `"${v.replaceAll('"', '""')}"`).join(',')).join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
@@ -100,12 +121,13 @@ export default function Home() {
         </div>
         <div className="panel"><div className="step"><span>2</span><div><h2>歌詞を貼り付ける</h2><p>利用権のある歌詞だけを入力してください。歌詞本文は保存しません。</p></div></div>
           {selected && <><div className="mt-4 flex items-center gap-3 rounded-xl bg-accent/60 p-3"><img className="size-11 rounded-lg" src={selected.artworkUrl100} alt=""/><div className="min-w-0 flex-1"><strong className="block truncate">{selected.trackName}</strong><span className="text-sm text-muted-foreground">{selected.artistName}</span></div><a aria-label="曲のページを開く" href={selected.trackViewUrl} target="_blank" rel="noreferrer"><ExternalLink size={18}/></a></div><div className="mt-3"><a className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground" href={`https://genius.com/search?q=${encodeURIComponent(`${selected.trackName} ${selected.artistName}`)}`} target="_blank" rel="noreferrer">Geniusで歌詞を確認 <ExternalLink size={14}/></a></div><p className="mt-2 text-xs text-muted-foreground">Geniusで歌詞を確認し、個人学習の範囲で下欄へ貼り付けてください。</p></>}
-          <Textarea value={lyrics} onChange={e => setLyrics(e.target.value)} className="mt-4 min-h-52 resize-y" placeholder="ここに英語の歌詞を貼り付け…"/><div className="mt-3 flex items-center justify-between text-sm text-muted-foreground"><span>{lyrics.length.toLocaleString()}文字</span><span>上位12語を抽出</span></div>
+          <Textarea value={lyrics} onChange={e => setLyrics(e.target.value)} className="mt-4 min-h-52 resize-y" placeholder="ここに英語の歌詞を貼り付け…"/><div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground"><span>{lyrics.length.toLocaleString()}文字・{baseWords.length}語</span><label className="flex items-center gap-2"><input type="checkbox" checked={excludeLearned} onChange={e => setExcludeLearned(e.target.checked)}/>学習済みの{learned.size}語を除外</label></div>
         </div>
       </section>
-      <aside className="panel h-fit lg:sticky lg:top-6"><div className="step"><span>3</span><div><h2>単語帳にする</h2><p>頻出語と例文を確認して保存します。</p></div></div>
-        <div className="mt-5 min-h-44 space-y-2">{words.length ? words.map(({word, example}) => <div className="word" key={word}><strong>{word}</strong><p>{example}</p></div>) : <div className="empty"><Sparkles size={26}/><p>歌詞を入力すると<br/>ここに単語が並びます</p></div>}</div>
-        <Button onClick={save} disabled={!selected || !words.length} className="mt-5 h-11 w-full">単語帳に保存</Button>{status && <p role="status" className="mt-3 text-sm text-muted-foreground">{status}</p>}
+      <aside className="panel h-fit lg:sticky lg:top-6"><div className="step"><span>3</span><div><h2>単語帳にする</h2><p>全単語の意味と用例を取得します。</p></div></div>
+        <Button variant="outline" onClick={fetchMeanings} disabled={!baseWords.length || loading} className="mt-5 h-11 w-full gap-2">{loading && <LoaderCircle className="animate-spin" size={16}/>}全{baseWords.length}語の意味・例文を取得</Button>
+        <div className="mt-4 max-h-[52vh] min-h-44 space-y-2 overflow-y-auto pr-1">{words.length ? words.map(({word, meaning, partOfSpeech, example}) => <div className="word" key={word}><div className="flex items-baseline gap-2"><strong>{word}</strong>{partOfSpeech && <small>{partOfSpeech}</small>}</div>{meaning && <p className="meaning">{meaning}</p>}<p>例: {example}</p></div>) : <div className="empty"><Sparkles size={26}/><p>歌詞を入力すると<br/>未学習の全単語が並びます</p></div>}</div>
+        <Button onClick={save} disabled={!selected || !words.length || loading} className="mt-5 h-11 w-full">単語帳に保存</Button>{status && <p role="status" className="mt-3 text-sm text-muted-foreground">{status}</p>}
         <div className="mt-6 border-t pt-5"><div className="flex items-center justify-between"><span className="text-sm font-semibold">保存済み</span><span className="text-sm text-muted-foreground">{entries.reduce((n, e) => n + e.words.length, 0)}語</span></div><Button variant="outline" onClick={downloadCsv} disabled={!entries.length} className="mt-3 w-full gap-2"><Download size={16}/>CSVを書き出す</Button><p className="mt-2 text-xs leading-relaxed text-muted-foreground">CSVはGoogle Sheetsでそのまま読み込めます。データはこのブラウザ内だけに保存されます。</p></div>
       </aside>
     </div>
