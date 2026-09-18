@@ -1,4 +1,4 @@
-export type Word = { word: string; meaning?: string; meanings?: string[]; partOfSpeech?: string; example: string };
+export type Word = { word: string; meaning?: string; meanings?: string[]; partOfSpeech?: string; example: string; exampleAuthor?: string; exampleUrl?: string };
 
 const STOP = new Set('a an and are as at be been but by can did do for from had has have he her him his i if in into is it its me my no not of on or our out she so than that the their them there they this to up was we were what when where which who will with would you your'.split(' '));
 const NOISE = /^(?:\[.*\]|\d*\s*embed|you might also like|contributors?|translations?|read more|see .* live|get tickets.*|sign up|log in)$/i;
@@ -10,14 +10,12 @@ export function cleanLyrics(text: string): string {
 export function extractWords(text: string, excluded = new Set<string>()): Word[] {
   const lines = cleanLyrics(text).split('\n');
   const counts = new Map<string, number>();
-  const examples = new Map<string, string>();
   for (const line of lines) for (const raw of line.toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g) ?? []) {
     if (raw.length <= 2 || STOP.has(raw) || excluded.has(raw)) continue;
     counts.set(raw, (counts.get(raw) ?? 0) + 1);
-    if (!examples.has(raw)) examples.set(raw, line);
   }
   return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([word]) => ({ word, example: examples.get(word) ?? '' }));
+    .map(([word]) => ({ word, example: '' }));
 }
 
 export function selectMeanings(defs: string[], limit = 3): { meanings: string[]; partOfSpeech: string } {

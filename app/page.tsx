@@ -103,7 +103,7 @@ export default function Home() {
   }
 
   function downloadCsv() {
-    const rows = [['曲名', 'アーティスト', '単語', '品詞', '意味', '例文', '保存日時'], ...entries.flatMap(e => e.words.map(w => [e.song, e.artist, w.word, w.partOfSpeech ?? '', (w.meanings ?? [w.meaning ?? '']).filter(Boolean).join(' / '), w.example, e.createdAt]))];
+    const rows = [['曲名', 'アーティスト', '単語', '品詞', '意味', '例文', '例文出典', '保存日時'], ...entries.flatMap(e => e.words.map(w => [e.song, e.artist, w.word, w.partOfSpeech ?? '', (w.meanings ?? [w.meaning ?? '']).filter(Boolean).join(' / '), w.example, w.exampleUrl ?? '', e.createdAt]))];
     const csv = rows.map(row => row.map(v => `"${v.replaceAll('"', '""')}"`).join(',')).join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
@@ -127,7 +127,7 @@ export default function Home() {
       </section>
       <aside className="panel h-fit lg:sticky lg:top-6"><div className="step"><span>3</span><div><h2>単語帳にする</h2><p>全単語の意味と用例を取得します。</p></div></div>
         <Button variant="outline" onClick={fetchMeanings} disabled={!baseWords.length || loading} className="mt-5 h-11 w-full gap-2">{loading && <LoaderCircle className="animate-spin" size={16}/>}全{baseWords.length}語の意味・例文を取得</Button>
-        <div className="mt-4 max-h-[52vh] min-h-44 space-y-2 overflow-y-auto pr-1">{words.length ? words.map(({word, meaning, meanings, partOfSpeech, example}) => <div className="word" key={word}><div className="flex items-baseline gap-2"><strong>{word}</strong>{partOfSpeech && <small>{partOfSpeech}</small>}</div><ol className="meaning">{(meanings ?? [meaning ?? '']).filter(Boolean).map((item, index) => <li key={item}>{index + 1}. {item}</li>)}</ol><p>例: {example}</p></div>) : <div className="empty"><Sparkles size={26}/><p>歌詞を入力すると<br/>未学習の全単語が並びます</p></div>}</div>
+        <div className="mt-4 max-h-[52vh] min-h-44 space-y-2 overflow-y-auto pr-1">{words.length ? words.map(({word, meaning, meanings, partOfSpeech, example, exampleAuthor, exampleUrl}) => <div className="word" key={word}><div className="flex items-baseline gap-2"><strong>{word}</strong>{partOfSpeech && <small>{partOfSpeech}</small>}</div><ol className="meaning">{(meanings ?? [meaning ?? '']).filter(Boolean).map((item, index) => <li key={item}>{index + 1}. {item}</li>)}</ol><p>例: {example || '日常例文が見つかりませんでした'}</p>{exampleUrl && <a className="source" href={exampleUrl} target="_blank" rel="noreferrer">Tatoeba / {exampleAuthor || 'contributor'} · CC BY 2.0 FR</a>}</div>) : <div className="empty"><Sparkles size={26}/><p>歌詞を入力すると<br/>未学習の全単語が並びます</p></div>}</div>
         <Button onClick={save} disabled={!selected || !words.length || loading} className="mt-5 h-11 w-full">単語帳に保存</Button>{status && <p role="status" className="mt-3 text-sm text-muted-foreground">{status}</p>}
         <div className="mt-6 border-t pt-5"><div className="flex items-center justify-between"><span className="text-sm font-semibold">保存済み</span><span className="text-sm text-muted-foreground">{entries.reduce((n, e) => n + e.words.length, 0)}語</span></div><Button variant="outline" onClick={downloadCsv} disabled={!entries.length} className="mt-3 w-full gap-2"><Download size={16}/>CSVを書き出す</Button><p className="mt-2 text-xs leading-relaxed text-muted-foreground">CSVはGoogle Sheetsでそのまま読み込めます。データはこのブラウザ内だけに保存されます。</p></div>
       </aside>

@@ -10,8 +10,8 @@ test('multiple meanings are kept while bare surname entries are ignored', () => 
   assert.deepEqual(selectMeanings(['n\tSurname.', 'v\tTo understand.', 'n\tKnowledge.']).meanings, ['To understand.', 'Knowledge.']);
 });
 
-test('all unique words are returned with lyric context and exclusions', () => {
+test('all unique words are returned without quoting lyrics and with exclusions', () => {
   const words = extractWords('Dream a little dream\nBright morning', new Set(['little']));
   assert.deepEqual(words.map(x => x.word), ['dream', 'bright', 'morning']);
-  assert.equal(words[0].example, 'Dream a little dream');
+  assert.equal(words[0].example, '');
 });
