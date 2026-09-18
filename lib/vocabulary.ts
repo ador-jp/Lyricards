@@ -24,3 +24,21 @@ export function selectMeanings(defs: string[], limit = 3): { meanings: string[];
   const selected = (useful.length ? useful : parsed).filter(item => item.meaning).slice(0, limit);
   return { meanings: selected.map(item => item.meaning), partOfSpeech: selected[0]?.partOfSpeech ?? '' };
 }
+
+export function selectExample(word: string, sentences: Array<{ id: number; text: string; owner?: string }>) {
+  const exact = new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+  const unsafe = /\b(?:fuck|shit|bitch|bastard|damn)\b/i;
+  return sentences.filter(item => exact.test(item.text) && !unsafe.test(item.text)).sort((a, b) => {
+    const score = (text: string) => (/\b(?:I|you|we|please|can|could|would)\b/i.test(text) ? 2 : 0) + (/^[A-Z][^.!?]{8,70}[.!?]$/.test(text) ? 1 : 0);
+    return score(b.text) - score(a.text);
+  })[0];
+}
+
+export function dailyFallback(word: string, partOfSpeech: string) {
+  if (/^(?:must|should|could|would|might|can|will)$/.test(word)) return `I ${word} finish this before dinner.`;
+  if (partOfSpeech === 'noun') return `We talked about the ${word} over lunch.`;
+  if (partOfSpeech === 'adjective') return `That sounds ${word} to me.`;
+  if (partOfSpeech === 'adverb') return `She explained it ${word}.`;
+  if (partOfSpeech === 'verb') return `I often ${word} when I have time.`;
+  return `Could you use the word “${word}” in a sentence?`;
+}

@@ -113,7 +113,7 @@ export default function Home() {
     let cursor = 0; let done = 0;
     const lookup = async (item: Word) => {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10_000);
+      const timeout = setTimeout(() => controller.abort(), 25_000);
       try {
         const response = await fetch(`/api/dictionary?word=${encodeURIComponent(item.word)}`, { signal: controller.signal });
         return response.ok ? await response.json() as Word : item;
