@@ -19,7 +19,8 @@ test('all unique words are returned without quoting lyrics and with exclusions',
 test('daily examples prefer useful exact matches and always have a fallback', () => {
   const example = selectExample('must', [
     { id: 1, text: 'Warmongers must fuck off.' },
-    { id: 2, text: 'I must take medicine.' },
+    { id: 2, text: 'Tom must take medicine.' },
+    { id: 3, text: 'I must take medicine.' },
   ]);
   assert.equal(example?.text, 'I must take medicine.');
   assert.equal(dailyFallback('must', 'verb'), 'I must finish this before dinner.');
