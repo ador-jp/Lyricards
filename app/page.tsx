@@ -87,23 +87,35 @@ export default function Home() {
   }
 
   async function fetchMeanings() {
+    if (!baseWords.length) return;
     setLoading(true); setStatus(`0 / ${baseWords.length}語を取得中…`);
-    let done = 0;
-    for (let i = 0; i < baseWords.length; i += 5) {
-      const batch = await Promise.all(baseWords.slice(i, i + 5).map(async item => {
-        try {
-          const response = await fetch(`/api/dictionary?word=${encodeURIComponent(item.word)}`);
-          return response.ok ? await response.json() as Word : item;
-        } catch { return item; }
-      }));
-      setDetails(current => ({ ...current, ...Object.fromEntries(batch.map(item => [item.word, item])) }));
-      done += batch.length; setStatus(`${done} / ${baseWords.length}語を取得中…`);
-    }
-    setLoading(false); setStatus(`${baseWords.length}語の意味と例文を取得しました。`);
+    let cursor = 0; let done = 0;
+    const lookup = async (item: Word) => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10_000);
+      try {
+        const response = await fetch(`/api/dictionary?word=${encodeURIComponent(item.word)}`, { signal: controller.signal });
+        return response.ok ? await response.json() as Word : item;
+      } catch { return item; } finally { clearTimeout(timeout); }
+    };
+    try {
+      const worker = async () => {
+        while (cursor < baseWords.length) {
+          const item = baseWords[cursor++];
+          const result = await lookup(item);
+          setDetails(current => ({ ...current, [item.word]: result }));
+          done += 1; setStatus(`${done} / ${baseWords.length}語を取得中…`);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(12, baseWords.length) }, worker));
+      setStatus(`${baseWords.length}語の意味と例文を取得しました。`);
+    } finally { setLoading(false); }
   }
 
   function downloadCsv() {
-    const rows = [['曲名', 'アーティスト', '単語', '品詞', '意味', '例文', '例文出典', '保存日時'], ...entries.flatMap(e => e.words.map(w => [e.song, e.artist, w.word, w.partOfSpeech ?? '', (w.meanings ?? [w.meaning ?? '']).filter(Boolean).join(' / '), w.example, w.exampleUrl ?? '', e.createdAt]))];
+    const savedRows = entries.flatMap(e => e.words.map(w => [e.song, e.artist, w.word, w.partOfSpeech ?? '', (w.meanings ?? [w.meaning ?? '']).filter(Boolean).join(' / '), w.example, w.exampleUrl ?? '', e.createdAt]));
+    const draftRows = selected ? words.map(w => [selected.trackName, selected.artistName, w.word, w.partOfSpeech ?? '', (w.meanings ?? [w.meaning ?? '']).filter(Boolean).join(' / '), w.example, w.exampleUrl ?? '', new Date().toISOString()]) : [];
+    const rows = [['曲名', 'アーティスト', '単語', '品詞', '意味', '例文', '例文出典', '保存日時'], ...savedRows, ...draftRows];
     const csv = rows.map(row => row.map(v => `"${v.replaceAll('"', '""')}"`).join(',')).join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
@@ -129,7 +141,7 @@ export default function Home() {
         <Button variant="outline" onClick={fetchMeanings} disabled={!baseWords.length || loading} className="mt-5 h-11 w-full gap-2">{loading && <LoaderCircle className="animate-spin" size={16}/>}全{baseWords.length}語の意味・例文を取得</Button>
         <div className="mt-4 max-h-[52vh] min-h-44 space-y-2 overflow-y-auto pr-1">{words.length ? words.map(({word, meaning, meanings, partOfSpeech, example, exampleAuthor, exampleUrl}) => <div className="word" key={word}><div className="flex items-baseline gap-2"><strong>{word}</strong>{partOfSpeech && <small>{partOfSpeech}</small>}</div><ol className="meaning">{(meanings ?? [meaning ?? '']).filter(Boolean).map((item, index) => <li key={item}>{index + 1}. {item}</li>)}</ol><p>例: {example || '日常例文が見つかりませんでした'}</p>{exampleUrl && <a className="source" href={exampleUrl} target="_blank" rel="noreferrer">Tatoeba / {exampleAuthor || 'contributor'} · CC BY 2.0 FR</a>}</div>) : <div className="empty"><Sparkles size={26}/><p>歌詞を入力すると<br/>未学習の全単語が並びます</p></div>}</div>
         <Button onClick={save} disabled={!selected || !words.length || loading} className="mt-5 h-11 w-full">単語帳に保存</Button>{status && <p role="status" className="mt-3 text-sm text-muted-foreground">{status}</p>}
-        <div className="mt-6 border-t pt-5"><div className="flex items-center justify-between"><span className="text-sm font-semibold">保存済み</span><span className="text-sm text-muted-foreground">{entries.reduce((n, e) => n + e.words.length, 0)}語</span></div><Button variant="outline" onClick={downloadCsv} disabled={!entries.length} className="mt-3 w-full gap-2"><Download size={16}/>CSVを書き出す</Button><p className="mt-2 text-xs leading-relaxed text-muted-foreground">CSVはGoogle Sheetsでそのまま読み込めます。データはこのブラウザ内だけに保存されます。</p></div>
+        <div className="mt-6 border-t pt-5"><div className="flex items-center justify-between"><span className="text-sm font-semibold">保存済み</span><span className="text-sm text-muted-foreground">{entries.reduce((n, e) => n + e.words.length, 0)}語</span></div><Button variant="outline" onClick={downloadCsv} disabled={!entries.length && !words.length} className="mt-3 w-full gap-2"><Download size={16}/>CSVを書き出す</Button><p className="mt-2 text-xs leading-relaxed text-muted-foreground">未保存の解析結果もCSVに含めます。Google Sheetsでそのまま読み込めます。</p></div>
       </aside>
     </div>
   </main>;
