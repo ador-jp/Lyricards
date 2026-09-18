@@ -10,3 +10,7 @@ export function extractWords(text: string): Word[] {
   return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 12)
     .map(([word]) => ({ word, example: `I learned how to use “${word}” from this song.` }));
 }
+
+export function cleanImportedLyrics(text: string): string {
+  return text.replace(/^\[(?:\d{1,2}:\d{2}(?:\.\d{1,3})?|ar:|ti:|al:|by:|offset:).*?\]\s*/gim, '').trim();
+}

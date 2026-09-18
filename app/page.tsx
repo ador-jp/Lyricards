@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Download, ExternalLink, Music2, Search, Sparkles } from 'lucide-react';
+import { Download, ExternalLink, FileUp, Music2, Search, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { extractWords, type Word } from '@/lib/vocabulary';
+import { cleanImportedLyrics, extractWords, type Word } from '@/lib/vocabulary';
 
 type Song = { trackId: number; trackName: string; artistName: string; artworkUrl100: string; trackViewUrl: string };
 type Entry = { id: string; song: string; artist: string; words: Word[]; createdAt: string };
@@ -80,6 +80,16 @@ export default function Home() {
     setStatus('曲を選択しました。歌詞の自動取得にはライセンス済みAPIの契約が必要です。');
   }
 
+  async function importLyrics(file?: File) {
+    if (!file) return;
+    if (file.size > 1_000_000) return setStatus('歌詞ファイルは1MB以下にしてください。');
+    try {
+      const text = cleanImportedLyrics(await file.text());
+      if (!text) throw new Error();
+      setLyrics(text); setStatus(`${file.name} から歌詞をインポートしました。`);
+    } catch { setStatus('歌詞ファイルを読み込めませんでした。'); }
+  }
+
   function downloadCsv() {
     const rows = [['曲名', 'アーティスト', '単語', '例文', '保存日時'], ...entries.flatMap(e => e.words.map(w => [e.song, e.artist, w.word, w.example, e.createdAt]))];
     const csv = rows.map(row => row.map(v => `"${v.replaceAll('"', '""')}"`).join(',')).join('\n');
@@ -99,7 +109,7 @@ export default function Home() {
           {songs.length > 0 && <div className="mt-4"><p className="mb-2 text-xs font-semibold text-muted-foreground">候補</p><div className="grid gap-2 sm:grid-cols-2">{songs.map(song => <button key={song.trackId} onClick={() => selectSong(song)} className={`song ${selected?.trackId === song.trackId ? 'selected' : ''}`}><img src={song.artworkUrl100} alt=""/><span><strong>{song.trackName}</strong><small>{song.artistName}</small></span></button>)}</div></div>}
         </div>
         <div className="panel"><div className="step"><span>2</span><div><h2>歌詞を貼り付ける</h2><p>利用権のある歌詞だけを入力してください。歌詞本文は保存しません。</p></div></div>
-          {selected && <><div className="mt-4 flex items-center gap-3 rounded-xl bg-accent/60 p-3"><img className="size-11 rounded-lg" src={selected.artworkUrl100} alt=""/><div className="min-w-0 flex-1"><strong className="block truncate">{selected.trackName}</strong><span className="text-sm text-muted-foreground">{selected.artistName}</span></div><a aria-label="曲のページを開く" href={selected.trackViewUrl} target="_blank" rel="noreferrer"><ExternalLink size={18}/></a></div><a className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline" href={`https://www.musixmatch.com/search/${encodeURIComponent(`${selected.trackName} ${selected.artistName}`)}`} target="_blank" rel="noreferrer">ライセンス提供元で歌詞を探す <ExternalLink size={14}/></a></>}
+          {selected && <><div className="mt-4 flex items-center gap-3 rounded-xl bg-accent/60 p-3"><img className="size-11 rounded-lg" src={selected.artworkUrl100} alt=""/><div className="min-w-0 flex-1"><strong className="block truncate">{selected.trackName}</strong><span className="text-sm text-muted-foreground">{selected.artistName}</span></div><a aria-label="曲のページを開く" href={selected.trackViewUrl} target="_blank" rel="noreferrer"><ExternalLink size={18}/></a></div><div className="mt-3 flex flex-wrap gap-3"><label className="inline-flex cursor-pointer items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"><FileUp size={16}/>歌詞ファイルをインポート<input className="sr-only" type="file" accept=".txt,.lrc,text/plain" onChange={e => void importLyrics(e.target.files?.[0])}/></label><a className="inline-flex items-center gap-1 py-2 text-sm font-medium text-primary hover:underline" href={`https://www.musixmatch.com/search/${encodeURIComponent(`${selected.trackName} ${selected.artistName}`)}`} target="_blank" rel="noreferrer">歌詞を探す <ExternalLink size={14}/></a></div></>}
           <Textarea value={lyrics} onChange={e => setLyrics(e.target.value)} className="mt-4 min-h-52 resize-y" placeholder="ここに英語の歌詞を貼り付け…"/><div className="mt-3 flex items-center justify-between text-sm text-muted-foreground"><span>{lyrics.length.toLocaleString()}文字</span><span>上位12語を抽出</span></div>
         </div>
       </section>
