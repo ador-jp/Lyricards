@@ -9,6 +9,7 @@ import { extractWords, type Word } from '@/lib/vocabulary';
 
 type Song = { trackId: number; trackName: string; artistName: string; artworkUrl100: string; trackViewUrl: string };
 type Entry = { id: string; song: string; artist: string; words: Word[]; createdAt: string };
+const STORAGE_KEY = 'lylicards.entries';
 
 export default function Home() {
   const [query, setQuery] = useState('');
@@ -17,7 +18,7 @@ export default function Home() {
   const [lyrics, setLyrics] = useState('');
   const [entries, setEntries] = useState<Entry[]>(() => {
     if (typeof window === 'undefined') return [];
-    try { return JSON.parse(localStorage.getItem('lyricbook.entries') || '[]'); } catch { return []; }
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || localStorage.getItem('lyricbook.entries') || '[]'); } catch { return []; }
   });
   const [status, setStatus] = useState('');
   const [excludeLearned, setExcludeLearned] = useState(true);
@@ -54,7 +55,7 @@ export default function Home() {
         const extracted = extractWords(value.lyrics);
         if (!extracted.length) throw new Error('No English words found');
         const entry = { id: crypto.randomUUID(), song: value.song, artist: value.artist, words: extracted, createdAt: new Date().toISOString() };
-        setEntries(current => { const next = [entry, ...current]; localStorage.setItem('lyricbook.entries', JSON.stringify(next)); return next; });
+        setEntries(current => { const next = [entry, ...current]; localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); return next; });
         return { saved: extracted.length, song: value.song };
       },
     }, { signal: lifecycle.signal });
@@ -76,7 +77,7 @@ export default function Home() {
   function save() {
     if (!selected || !words.length) return setStatus('曲を選び、英語の歌詞を貼り付けてください。');
     const next = [{ id: crypto.randomUUID(), song: selected.trackName, artist: selected.artistName, words, createdAt: new Date().toISOString() }, ...entries];
-    setEntries(next); localStorage.setItem('lyricbook.entries', JSON.stringify(next));
+    setEntries(next); localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     setStatus(`${words.length}語をこの端末に保存しました。`);
   }
 
@@ -102,16 +103,16 @@ export default function Home() {
   }
 
   function downloadCsv() {
-    const rows = [['曲名', 'アーティスト', '単語', '品詞', '意味', '例文', '保存日時'], ...entries.flatMap(e => e.words.map(w => [e.song, e.artist, w.word, w.partOfSpeech ?? '', w.meaning ?? '', w.example, e.createdAt]))];
+    const rows = [['曲名', 'アーティスト', '単語', '品詞', '意味', '例文', '保存日時'], ...entries.flatMap(e => e.words.map(w => [e.song, e.artist, w.word, w.partOfSpeech ?? '', (w.meanings ?? [w.meaning ?? '']).filter(Boolean).join(' / '), w.example, e.createdAt]))];
     const csv = rows.map(row => row.map(v => `"${v.replaceAll('"', '""')}"`).join(',')).join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
-    a.download = 'lyricbook.csv'; a.click(); URL.revokeObjectURL(a.href);
+    a.download = 'lylicards.csv'; a.click(); URL.revokeObjectURL(a.href);
   }
 
   return <main className="min-h-screen bg-background text-foreground">
     <header className="border-b border-border/70 bg-card/80 backdrop-blur"><div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4">
-      <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-primary text-primary-foreground"><Music2 size={20}/></span><div><h1 className="text-lg font-bold tracking-tight">Lyricbook</h1><p className="text-xs text-muted-foreground">歌からつくる、自分だけの単語帳</p></div></div><span className="rounded-full bg-accent px-3 py-1 text-xs font-medium text-accent-foreground">MVP</span>
+      <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-primary text-primary-foreground"><Music2 size={20}/></span><div><h1 className="text-lg font-bold tracking-tight">Lylicards</h1><p className="text-xs text-muted-foreground">歌からつくる、自分だけの単語帳</p></div></div><span className="rounded-full bg-accent px-3 py-1 text-xs font-medium text-accent-foreground">MVP</span>
     </div></header>
     <div className="mx-auto grid max-w-7xl gap-6 px-5 py-7 lg:grid-cols-[minmax(0,1fr)_360px]">
       <section className="space-y-6">
@@ -126,7 +127,7 @@ export default function Home() {
       </section>
       <aside className="panel h-fit lg:sticky lg:top-6"><div className="step"><span>3</span><div><h2>単語帳にする</h2><p>全単語の意味と用例を取得します。</p></div></div>
         <Button variant="outline" onClick={fetchMeanings} disabled={!baseWords.length || loading} className="mt-5 h-11 w-full gap-2">{loading && <LoaderCircle className="animate-spin" size={16}/>}全{baseWords.length}語の意味・例文を取得</Button>
-        <div className="mt-4 max-h-[52vh] min-h-44 space-y-2 overflow-y-auto pr-1">{words.length ? words.map(({word, meaning, partOfSpeech, example}) => <div className="word" key={word}><div className="flex items-baseline gap-2"><strong>{word}</strong>{partOfSpeech && <small>{partOfSpeech}</small>}</div>{meaning && <p className="meaning">{meaning}</p>}<p>例: {example}</p></div>) : <div className="empty"><Sparkles size={26}/><p>歌詞を入力すると<br/>未学習の全単語が並びます</p></div>}</div>
+        <div className="mt-4 max-h-[52vh] min-h-44 space-y-2 overflow-y-auto pr-1">{words.length ? words.map(({word, meaning, meanings, partOfSpeech, example}) => <div className="word" key={word}><div className="flex items-baseline gap-2"><strong>{word}</strong>{partOfSpeech && <small>{partOfSpeech}</small>}</div><ol className="meaning">{(meanings ?? [meaning ?? '']).filter(Boolean).map((item, index) => <li key={item}>{index + 1}. {item}</li>)}</ol><p>例: {example}</p></div>) : <div className="empty"><Sparkles size={26}/><p>歌詞を入力すると<br/>未学習の全単語が並びます</p></div>}</div>
         <Button onClick={save} disabled={!selected || !words.length || loading} className="mt-5 h-11 w-full">単語帳に保存</Button>{status && <p role="status" className="mt-3 text-sm text-muted-foreground">{status}</p>}
         <div className="mt-6 border-t pt-5"><div className="flex items-center justify-between"><span className="text-sm font-semibold">保存済み</span><span className="text-sm text-muted-foreground">{entries.reduce((n, e) => n + e.words.length, 0)}語</span></div><Button variant="outline" onClick={downloadCsv} disabled={!entries.length} className="mt-3 w-full gap-2"><Download size={16}/>CSVを書き出す</Button><p className="mt-2 text-xs leading-relaxed text-muted-foreground">CSVはGoogle Sheetsでそのまま読み込めます。データはこのブラウザ内だけに保存されます。</p></div>
       </aside>

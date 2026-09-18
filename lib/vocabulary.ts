@@ -1,4 +1,4 @@
-export type Word = { word: string; meaning?: string; partOfSpeech?: string; example: string };
+export type Word = { word: string; meaning?: string; meanings?: string[]; partOfSpeech?: string; example: string };
 
 const STOP = new Set('a an and are as at be been but by can did do for from had has have he her him his i if in into is it its me my no not of on or our out she so than that the their them there they this to up was we were what when where which who will with would you your'.split(' '));
 const NOISE = /^(?:\[.*\]|\d*\s*embed|you might also like|contributors?|translations?|read more|see .* live|get tickets.*|sign up|log in)$/i;
@@ -18,4 +18,11 @@ export function extractWords(text: string, excluded = new Set<string>()): Word[]
   }
   return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([word]) => ({ word, example: examples.get(word) ?? '' }));
+}
+
+export function selectMeanings(defs: string[], limit = 3): { meanings: string[]; partOfSpeech: string } {
+  const parsed = defs.map(def => { const [partOfSpeech, meaning = ''] = def.split('\t', 2); return { partOfSpeech, meaning: meaning.trim() }; });
+  const useful = parsed.filter(item => item.meaning && !/^(?:a\s+)?(?:surname|given name|family name)[.;]?$/i.test(item.meaning));
+  const selected = (useful.length ? useful : parsed).filter(item => item.meaning).slice(0, limit);
+  return { meanings: selected.map(item => item.meaning), partOfSpeech: selected[0]?.partOfSpeech ?? '' };
 }
