@@ -23,6 +23,18 @@ export default function Home() {
   const words = useMemo(() => extractWords(lyrics), [lyrics]);
 
   useEffect(() => {
+    if (query.trim().length < 2) { setSongs([]); return; }
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`https://itunes.apple.com/search?media=music&entity=song&limit=6&term=${encodeURIComponent(query)}`, { signal: controller.signal });
+        if (res.ok) setSongs(((await res.json()) as { results: Song[] }).results);
+      } catch (error) { if ((error as Error).name !== 'AbortError') setStatus('候補を取得できませんでした。'); }
+    }, 350);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [query]);
+
+  useEffect(() => {
     const context = (document as Document & { modelContext?: { registerTool: (tool: object, options: { signal: AbortSignal }) => void } }).modelContext;
     if (!context?.registerTool) return;
     const lifecycle = new AbortController();
@@ -63,6 +75,11 @@ export default function Home() {
     setStatus(`${words.length}語をこの端末に保存しました。`);
   }
 
+  function selectSong(song: Song) {
+    setSelected(song); setLyrics('');
+    setStatus('曲を選択しました。歌詞の自動取得にはライセンス済みAPIの契約が必要です。');
+  }
+
   function downloadCsv() {
     const rows = [['曲名', 'アーティスト', '単語', '例文', '保存日時'], ...entries.flatMap(e => e.words.map(w => [e.song, e.artist, w.word, w.example, e.createdAt]))];
     const csv = rows.map(row => row.map(v => `"${v.replaceAll('"', '""')}"`).join(',')).join('\n');
@@ -78,11 +95,11 @@ export default function Home() {
     <div className="mx-auto grid max-w-7xl gap-6 px-5 py-7 lg:grid-cols-[minmax(0,1fr)_360px]">
       <section className="space-y-6">
         <div className="panel"><div className="step"><span>1</span><div><h2>曲を探す</h2><p>Apple Musicの公開メタデータから検索します。</p></div></div>
-          <form onSubmit={searchSongs} className="mt-5 flex gap-2"><Input aria-label="曲名またはアーティスト" value={query} onChange={e => setQuery(e.target.value)} placeholder="例：Imagine John Lennon" className="h-11"/><Button type="submit" className="h-11 gap-2"><Search size={17}/>検索</Button></form>
-          {songs.length > 0 && <div className="mt-4 grid gap-2 sm:grid-cols-2">{songs.map(song => <button key={song.trackId} onClick={() => setSelected(song)} className={`song ${selected?.trackId === song.trackId ? 'selected' : ''}`}><img src={song.artworkUrl100} alt=""/><span><strong>{song.trackName}</strong><small>{song.artistName}</small></span></button>)}</div>}
+          <form onSubmit={searchSongs} className="mt-5 flex gap-2"><Input aria-label="曲名またはアーティスト" value={query} onChange={e => setQuery(e.target.value)} placeholder="2文字以上で候補を表示" autoComplete="off" className="h-11"/><Button type="submit" className="h-11 gap-2"><Search size={17}/>検索</Button></form>
+          {songs.length > 0 && <div className="mt-4"><p className="mb-2 text-xs font-semibold text-muted-foreground">候補</p><div className="grid gap-2 sm:grid-cols-2">{songs.map(song => <button key={song.trackId} onClick={() => selectSong(song)} className={`song ${selected?.trackId === song.trackId ? 'selected' : ''}`}><img src={song.artworkUrl100} alt=""/><span><strong>{song.trackName}</strong><small>{song.artistName}</small></span></button>)}</div></div>}
         </div>
         <div className="panel"><div className="step"><span>2</span><div><h2>歌詞を貼り付ける</h2><p>利用権のある歌詞だけを入力してください。歌詞本文は保存しません。</p></div></div>
-          {selected && <div className="mt-4 flex items-center gap-3 rounded-xl bg-accent/60 p-3"><img className="size-11 rounded-lg" src={selected.artworkUrl100} alt=""/><div className="min-w-0 flex-1"><strong className="block truncate">{selected.trackName}</strong><span className="text-sm text-muted-foreground">{selected.artistName}</span></div><a aria-label="曲のページを開く" href={selected.trackViewUrl} target="_blank" rel="noreferrer"><ExternalLink size={18}/></a></div>}
+          {selected && <><div className="mt-4 flex items-center gap-3 rounded-xl bg-accent/60 p-3"><img className="size-11 rounded-lg" src={selected.artworkUrl100} alt=""/><div className="min-w-0 flex-1"><strong className="block truncate">{selected.trackName}</strong><span className="text-sm text-muted-foreground">{selected.artistName}</span></div><a aria-label="曲のページを開く" href={selected.trackViewUrl} target="_blank" rel="noreferrer"><ExternalLink size={18}/></a></div><a className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline" href={`https://www.musixmatch.com/search/${encodeURIComponent(`${selected.trackName} ${selected.artistName}`)}`} target="_blank" rel="noreferrer">ライセンス提供元で歌詞を探す <ExternalLink size={14}/></a></>}
           <Textarea value={lyrics} onChange={e => setLyrics(e.target.value)} className="mt-4 min-h-52 resize-y" placeholder="ここに英語の歌詞を貼り付け…"/><div className="mt-3 flex items-center justify-between text-sm text-muted-foreground"><span>{lyrics.length.toLocaleString()}文字</span><span>上位12語を抽出</span></div>
         </div>
       </section>
