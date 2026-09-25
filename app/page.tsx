@@ -116,7 +116,6 @@ export default function Home() {
   async function fetchMeanings() {
     if (!baseWords.length) return;
     setLoading(true); setStatus(`0 / ${baseWords.length}語を取得中…`);
-    let cursor = 0; let done = 0; let unresolved = 0;
     const lookup = async (item: Word): Promise<{ result: Word; resolved: boolean }> => {
       for (let attempt = 0; attempt < 3; attempt += 1) {
         const controller = new AbortController();
@@ -137,20 +136,38 @@ export default function Home() {
       }
       return { result: item, resolved: false };
     };
-    try {
+    const runBatch = async (items: Word[], retrying: boolean) => {
+      let cursor = 0; let done = 0;
+      const unresolved: Word[] = [];
       const worker = async () => {
-        while (cursor < baseWords.length) {
-          const item = baseWords[cursor++];
+        while (cursor < items.length) {
+          const item = items[cursor++];
           const { result, resolved } = await lookup(item);
-          setDetails(current => ({ ...current, [item.word]: result }));
-          if (!resolved) unresolved += 1;
-          done += 1; setStatus(`${done} / ${baseWords.length}語を取得中…`);
+          setDetails(current => {
+            const hasData = Boolean(result.partOfSpeech || result.meaning || result.meanings?.length || result.example);
+            return { ...current, [item.word]: hasData ? result : current[item.word] ?? result };
+          });
+          if (!resolved) unresolved.push(item);
+          done += 1;
+          setStatus(`${done} / ${items.length}語を${retrying ? '再取得' : '取得'}中…`);
         }
       };
-      await Promise.all(Array.from({ length: Math.min(4, baseWords.length) }, worker));
-      setStatus(unresolved
-        ? `${baseWords.length - unresolved}語を取得、${unresolved}語は品詞・意味を取得できませんでした。再試行できます。`
-        : `${baseWords.length}語の意味と例文を取得しました。`);
+      await Promise.all(Array.from({ length: Math.min(4, items.length) }, worker));
+      return unresolved;
+    };
+    try {
+      let unresolved = await runBatch(baseWords, false);
+      const automaticRetryCount = unresolved.length;
+      if (automaticRetryCount) {
+        setStatus(`${automaticRetryCount}語を自動で再取得中…`);
+        await delay(750);
+        unresolved = await runBatch(unresolved, true);
+      }
+      setStatus(unresolved.length
+        ? `${baseWords.length - unresolved.length}語を取得、${unresolved.length}語は自動再取得後も品詞・意味を取得できませんでした。再試行できます。`
+        : automaticRetryCount
+          ? `${baseWords.length}語の意味と例文を取得しました。未取得だった${automaticRetryCount}語は自動で再取得しました。`
+          : `${baseWords.length}語の意味と例文を取得しました。`);
     } finally { setLoading(false); }
   }
 
