@@ -11,6 +11,12 @@ type Song = { trackId: number; trackName: string; artistName: string; artworkUrl
 type Entry = { id: string; song: string; artist: string; words: Word[]; createdAt: string };
 const STORAGE_KEY = 'lyricards.entries';
 
+function delay(ms: number) {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, ms);
+  return promise;
+}
+
 export default function Home() {
   const [query, setQuery] = useState('');
   const [songs, setSongs] = useState<Song[]>([]);
@@ -110,26 +116,41 @@ export default function Home() {
   async function fetchMeanings() {
     if (!baseWords.length) return;
     setLoading(true); setStatus(`0 / ${baseWords.length}語を取得中…`);
-    let cursor = 0; let done = 0;
-    const lookup = async (item: Word) => {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 25_000);
-      try {
-        const response = await fetch(`/api/dictionary?word=${encodeURIComponent(item.word)}`, { signal: controller.signal });
-        return response.ok ? await response.json() as Word : item;
-      } catch { return item; } finally { clearTimeout(timeout); }
+    let cursor = 0; let done = 0; let unresolved = 0;
+    const lookup = async (item: Word): Promise<{ result: Word; resolved: boolean }> => {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15_000);
+        try {
+          const response = await fetch(`/api/dictionary?word=${encodeURIComponent(item.word)}`, { signal: controller.signal });
+          if (response.ok) {
+            const result = await response.json() as Word;
+            const hasMeaning = Boolean(result.meaning || result.meanings?.length);
+            return { result, resolved: hasMeaning && Boolean(result.partOfSpeech) };
+          }
+        } catch {
+          // Retry transient API and network failures.
+        } finally {
+          clearTimeout(timeout);
+        }
+        if (attempt < 2) await delay(250 * (attempt + 1));
+      }
+      return { result: item, resolved: false };
     };
     try {
       const worker = async () => {
         while (cursor < baseWords.length) {
           const item = baseWords[cursor++];
-          const result = await lookup(item);
+          const { result, resolved } = await lookup(item);
           setDetails(current => ({ ...current, [item.word]: result }));
+          if (!resolved) unresolved += 1;
           done += 1; setStatus(`${done} / ${baseWords.length}語を取得中…`);
         }
       };
-      await Promise.all(Array.from({ length: Math.min(12, baseWords.length) }, worker));
-      setStatus(`${baseWords.length}語の意味と例文を取得しました。`);
+      await Promise.all(Array.from({ length: Math.min(4, baseWords.length) }, worker));
+      setStatus(unresolved
+        ? `${baseWords.length - unresolved}語を取得、${unresolved}語は品詞・意味を取得できませんでした。再試行できます。`
+        : `${baseWords.length}語の意味と例文を取得しました。`);
     } finally { setLoading(false); }
   }
 
