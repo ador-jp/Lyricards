@@ -12,20 +12,11 @@ export async function GET(request: Request) {
     return Response.json({ error: 'Search query must be at least two characters.' }, { status: 400 });
   }
 
-  const params = new URLSearchParams({
-    media: 'music',
-    entity: 'song',
-    limit: '6',
-    country: 'JP',
-    term: query,
-  });
+  const searchUrl = `https://itunes.apple.com/search?media=music&entity=song&limit=6&term=${encodeURIComponent(query)}`;
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8_000);
     try {
-      const response = await fetch(`https://itunes.apple.com/search?${params}`, {
+      const response = await fetch(searchUrl, {
         headers: { accept: 'application/json' },
-        signal: controller.signal,
       });
       if (response.ok) {
         const data = await response.json() as { results?: Partial<Song>[] };
@@ -50,9 +41,7 @@ export async function GET(request: Request) {
         );
       }
     } catch {
-      // Retry transient upstream and timeout failures.
-    } finally {
-      clearTimeout(timeout);
+      // Retry transient upstream and JSON parsing failures.
     }
     if (attempt < 2) {
       await new Promise<void>(resolve => setTimeout(resolve, 250 * (attempt + 1)));
