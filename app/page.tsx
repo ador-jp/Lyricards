@@ -45,21 +45,6 @@ export default function Home() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(entries)); } catch { /* Local storage is optional. */ }
   }, [entries, entriesReady]);
 
-  useEffect(() => {
-    if (query.trim().length < 2) { setSongs([]); setSearchStatus(''); return; }
-    const controller = new AbortController();
-    const timer = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/songs?q=${encodeURIComponent(query)}`, { signal: controller.signal });
-        if (!res.ok) throw new Error();
-        const payload = await res.json() as { results: Song[] };
-        setSongs(payload.results);
-      } catch (error) {
-        if ((error as Error).name !== 'AbortError') setSearchStatus('候補を取得できませんでした。検索ボタンでもう一度お試しください。');
-      }
-    }, 350);
-    return () => { clearTimeout(timer); controller.abort(); };
-  }, [query]);
 
   useEffect(() => {
     const context = (document as Document & { modelContext?: { registerTool: (tool: object, options: { signal: AbortSignal }) => void } }).modelContext;
@@ -96,7 +81,7 @@ export default function Home() {
       const nextSongs = payload.results;
       setSongs(nextSongs);
       setSearchStatus(nextSongs.length ? '' : '候補が見つかりませんでした。');
-    } catch { setSearchStatus('検索できませんでした。通信環境を確認して再試行してください。'); }
+    } catch { setSearchStatus('検索サービスが一時的に応答していません。少し待って再試行してください。'); }
   }
 
   async function save() {
@@ -202,8 +187,8 @@ export default function Home() {
     </div></header>
     <div className="mx-auto grid max-w-7xl gap-4 px-3 py-4 sm:gap-6 sm:px-5 sm:py-7 lg:grid-cols-[minmax(0,1fr)_360px]">
       <section className="space-y-6">
-        <div className="panel"><div className="step"><span>1</span><div><h2>曲を探す</h2><p>Apple Musicの公開メタデータから検索します。</p></div></div>
-          <form onSubmit={searchSongs} className="mt-5 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"><Input aria-label="曲名またはアーティスト" value={query} onChange={e => setQuery(e.target.value)} placeholder="2文字以上で候補を表示" autoComplete="off" enterKeyHint="search" className="h-11"/><Button type="submit" className="h-11 w-full gap-2 sm:w-auto"><Search size={17}/>検索</Button></form>{searchStatus && <p role="status" className="mt-2 text-sm text-muted-foreground">{searchStatus}</p>}
+        <div className="panel"><div className="step"><span>1</span><div><h2>曲を探す</h2><p>曲名またはアーティスト名を入力して検索します。</p></div></div>
+          <form onSubmit={searchSongs} className="mt-5 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"><Input aria-label="曲名またはアーティスト" value={query} onChange={e => { setQuery(e.target.value); setSongs([]); setSearchStatus(''); }} placeholder="曲名またはアーティスト名" autoComplete="off" enterKeyHint="search" className="h-11"/><Button type="submit" className="h-11 w-full gap-2 sm:w-auto"><Search size={17}/>検索</Button></form>{searchStatus && <p role="status" className="mt-2 text-sm text-muted-foreground">{searchStatus}</p>}
           {songs.length > 0 && <div className="mt-4"><p className="mb-2 text-xs font-semibold text-muted-foreground">候補</p><div className="grid gap-2 sm:grid-cols-2">{songs.map(song => <button type="button" key={song.trackId} onClick={() => selectSong(song)} className={`song w-full touch-manipulation ${selected?.trackId === song.trackId ? 'selected' : ''}`}><img src={song.artworkUrl100} alt=""/><span><strong>{song.trackName}</strong><small>{song.artistName}</small></span></button>)}</div></div>}
         </div>
         <div className="panel"><div className="step"><span>2</span><div><h2>歌詞を貼り付ける</h2><p>利用権のある歌詞だけを入力してください。歌詞本文は保存しません。</p></div></div>

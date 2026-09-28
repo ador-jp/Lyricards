@@ -12,23 +12,51 @@ export async function GET(request: Request) {
     return Response.json({ error: 'Search query must be at least two characters.' }, { status: 400 });
   }
 
-  try {
-    const response = await fetch(
-      `https://itunes.apple.com/search?media=music&entity=song&limit=6&term=${encodeURIComponent(query)}`,
-      { headers: { accept: 'application/json' } },
-    );
-    if (!response.ok) throw new Error('Apple Music search failed');
-
-    const data = await response.json() as { results?: Partial<Song>[] };
-    const results = (data.results ?? []).filter((song): song is Song =>
-      typeof song.trackId === 'number'
-      && typeof song.trackName === 'string'
-      && typeof song.artistName === 'string'
-      && typeof song.artworkUrl100 === 'string'
-      && typeof song.trackViewUrl === 'string'
-    );
-    return Response.json({ results });
-  } catch {
-    return Response.json({ error: 'Song search is unavailable.' }, { status: 502 });
+  const params = new URLSearchParams({
+    media: 'music',
+    entity: 'song',
+    limit: '6',
+    country: 'JP',
+    term: query,
+  });
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8_000);
+    try {
+      const response = await fetch(`https://itunes.apple.com/search?${params}`, {
+        headers: { accept: 'application/json' },
+        signal: controller.signal,
+      });
+      if (response.ok) {
+        const data = await response.json() as { results?: Partial<Song>[] };
+        const results = (data.results ?? [])
+          .filter((song): song is Song =>
+            typeof song.trackId === 'number'
+            && typeof song.trackName === 'string'
+            && typeof song.artistName === 'string'
+            && typeof song.artworkUrl100 === 'string'
+            && typeof song.trackViewUrl === 'string'
+          )
+          .map(song => ({
+            trackId: song.trackId,
+            trackName: song.trackName,
+            artistName: song.artistName,
+            artworkUrl100: song.artworkUrl100,
+            trackViewUrl: song.trackViewUrl,
+          }));
+        return Response.json(
+          { results },
+          { headers: { 'cache-control': 'public, max-age=60, s-maxage=300' } },
+        );
+      }
+    } catch {
+      // Retry transient upstream and timeout failures.
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (attempt < 2) {
+      await new Promise<void>(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+    }
   }
+  return Response.json({ error: 'Song search is unavailable.' }, { status: 502 });
 }
