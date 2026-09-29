@@ -10,6 +10,59 @@ import { extractWords, type Word } from '@/lib/vocabulary';
 type Song = { trackId: number; trackName: string; artistName: string; artworkUrl100: string; trackViewUrl: string };
 type Entry = { id: string; song: string; artist: string; words: Word[]; createdAt: string };
 const STORAGE_KEY = 'lyricards.entries';
+function searchAppleMusicFromBrowser(query: string) {
+  return new Promise<Song[]>((resolve, reject) => {
+    const callbackName = `lyricardsSearch_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const callbackHost = window as typeof window & Record<string, unknown>;
+    const script = document.createElement('script');
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      script.remove();
+      delete callbackHost[callbackName];
+    };
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('Apple Music search timed out'));
+    }, 12_000);
+    callbackHost[callbackName] = (payload: unknown) => {
+      cleanup();
+      const rawResults = payload && typeof payload === 'object' && 'results' in payload && Array.isArray(payload.results)
+        ? payload.results
+        : [];
+      const results = rawResults
+        .filter((song): song is Song =>
+          song !== null
+          && typeof song === 'object'
+          && 'trackId' in song
+          && typeof song.trackId === 'number'
+          && 'trackName' in song
+          && typeof song.trackName === 'string'
+          && 'artistName' in song
+          && typeof song.artistName === 'string'
+          && 'artworkUrl100' in song
+          && typeof song.artworkUrl100 === 'string'
+          && 'trackViewUrl' in song
+          && typeof song.trackViewUrl === 'string'
+        )
+        .map(song => ({
+          trackId: song.trackId,
+          trackName: song.trackName,
+          artistName: song.artistName,
+          artworkUrl100: song.artworkUrl100,
+          trackViewUrl: song.trackViewUrl,
+        }));
+      resolve(results);
+    };
+    script.onerror = () => {
+      cleanup();
+      reject(new Error('Apple Music search failed'));
+    };
+    script.async = true;
+    script.referrerPolicy = 'no-referrer';
+    script.src = `https://itunes.apple.com/search?media=music&entity=song&limit=6&term=${encodeURIComponent(query)}&callback=${callbackName}`;
+    document.head.append(script);
+  });
+}
 
 
 export default function Home() {
@@ -21,6 +74,7 @@ export default function Home() {
   const [entriesReady, setEntriesReady] = useState(false);
   const [status, setStatus] = useState('');
   const [searchStatus, setSearchStatus] = useState('');
+  const [searching, setSearching] = useState(false);
   const [excludeLearned, setExcludeLearned] = useState(true);
   const [details, setDetails] = useState<Record<string, Partial<Word>>>({});
   const [loading, setLoading] = useState(false);
@@ -72,16 +126,28 @@ export default function Home() {
 
   async function searchSongs(e: React.FormEvent) {
     e.preventDefault();
-    if (query.trim().length < 2) return setSearchStatus('2文字以上入力してください。');
-    setSearchStatus('検索中…');
+    const term = query.trim();
+    if (term.length < 2) return setSearchStatus('2文字以上入力してください。');
+    setSearching(true); setSearchStatus('検索中…');
     try {
-      const res = await fetch(`/api/songs?q=${encodeURIComponent(query)}`);
-      if (!res.ok) throw new Error();
-      const payload = await res.json() as { results: Song[] };
-      const nextSongs = payload.results;
+      let nextSongs: Song[];
+      try {
+        const response = await fetch(`/api/songs?q=${encodeURIComponent(term)}`);
+        if (!response.ok) throw new Error();
+        const payload = await response.json() as { results?: Song[] };
+        if (!Array.isArray(payload.results)) throw new Error();
+        nextSongs = payload.results;
+      } catch {
+        setSearchStatus('別の経路で検索中…');
+        nextSongs = await searchAppleMusicFromBrowser(term);
+      }
       setSongs(nextSongs);
       setSearchStatus(nextSongs.length ? '' : '候補が見つかりませんでした。');
-    } catch { setSearchStatus('検索サービスが一時的に応答していません。少し待って再試行してください。'); }
+    } catch {
+      setSearchStatus('Apple Musicの検索に接続できませんでした。少し待って再試行してください。');
+    } finally {
+      setSearching(false);
+    }
   }
 
   async function save() {
@@ -188,7 +254,7 @@ export default function Home() {
     <div className="mx-auto grid max-w-7xl gap-4 px-3 py-4 sm:gap-6 sm:px-5 sm:py-7 lg:grid-cols-[minmax(0,1fr)_360px]">
       <section className="space-y-6">
         <div className="panel"><div className="step"><span>1</span><div><h2>曲を探す</h2><p>曲名またはアーティスト名を入力して検索します。</p></div></div>
-          <form onSubmit={searchSongs} className="mt-5 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"><Input aria-label="曲名またはアーティスト" value={query} onChange={e => { setQuery(e.target.value); setSongs([]); setSearchStatus(''); }} placeholder="曲名またはアーティスト名" autoComplete="off" enterKeyHint="search" className="h-11"/><Button type="submit" className="h-11 w-full gap-2 sm:w-auto"><Search size={17}/>検索</Button></form>{searchStatus && <p role="status" className="mt-2 text-sm text-muted-foreground">{searchStatus}</p>}
+          <form onSubmit={searchSongs} className="mt-5 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"><Input aria-label="曲名またはアーティスト" value={query} onChange={e => { setQuery(e.target.value); setSongs([]); setSearchStatus(''); }} placeholder="曲名またはアーティスト名" autoComplete="off" enterKeyHint="search" className="h-11"/><Button type="submit" disabled={searching} className="h-11 w-full gap-2 sm:w-auto">{searching ? <LoaderCircle className="animate-spin" size={16}/> : <Search size={17}/>} {searching ? '検索中…' : '検索'}</Button></form>{searchStatus && <p role="status" className="mt-2 text-sm text-muted-foreground">{searchStatus}</p>}
           {songs.length > 0 && <div className="mt-4"><p className="mb-2 text-xs font-semibold text-muted-foreground">候補</p><div className="grid gap-2 sm:grid-cols-2">{songs.map(song => <button type="button" key={song.trackId} onClick={() => selectSong(song)} className={`song w-full touch-manipulation ${selected?.trackId === song.trackId ? 'selected' : ''}`}><img src={song.artworkUrl100} alt=""/><span><strong>{song.trackName}</strong><small>{song.artistName}</small></span></button>)}</div></div>}
         </div>
         <div className="panel"><div className="step"><span>2</span><div><h2>歌詞を貼り付ける</h2><p>利用権のある歌詞だけを入力してください。歌詞本文は保存しません。</p></div></div>
