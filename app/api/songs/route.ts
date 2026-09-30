@@ -46,7 +46,7 @@ async function searchAppleMusic(query: string): Promise<Song[] | null> {
 async function searchDeezer(query: string): Promise<Song[] | null> {
   try {
     const response = await fetch(
-      `https://api.deezer.com/search?q=${encodeURIComponent(query)}&limit=6`,
+      `https://api.deezer.com/search?q=${encodeURIComponent(query)}&limit=6&lang=en`,
       { headers: { accept: 'application/json' } },
     );
     if (!response.ok) return null;

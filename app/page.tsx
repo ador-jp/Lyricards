@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Download, ExternalLink, LoaderCircle, Music2, Search, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,10 +22,14 @@ export default function Home() {
   const [status, setStatus] = useState('');
   const [searchStatus, setSearchStatus] = useState('');
   const [searching, setSearching] = useState(false);
+  const [geniusUrl, setGeniusUrl] = useState('');
+  const [geniusStatus, setGeniusStatus] = useState('');
+  const [geniusLoading, setGeniusLoading] = useState(false);
   const [excludeLearned, setExcludeLearned] = useState(true);
   const [details, setDetails] = useState<Record<string, Partial<Word>>>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const geniusRequest = useRef(0);
   const learned = useMemo(() => new Set(entries.flatMap(entry => entry.words.map(item => item.word.toLowerCase()))), [entries]);
   const baseWords = useMemo(() => extractWords(lyrics, excludeLearned ? learned : new Set()), [lyrics, excludeLearned, learned]);
   const words = useMemo(() => baseWords.map(item => ({ ...item, ...details[item.word], example: details[item.word]?.example || item.example })), [baseWords, details]);
@@ -106,16 +110,31 @@ export default function Home() {
     }
     setEntries(current => [entry, ...current]);
     setQuery(''); setSongs([]); setSearchStatus('');
+    geniusRequest.current += 1;
     setSelected(null); setLyrics(''); setDetails({});
+    setGeniusUrl(''); setGeniusStatus(''); setGeniusLoading(false);
     setStatus(savedRemotely
       ? `${savedWordCount}語を保存しました。続けて次の曲を検索できます。`
       : '通信できなかったため、この端末に一時保存しました。続けて次の曲を検索できます。');
     setSaving(false);
   }
 
-  function selectSong(song: Song) {
+  async function selectSong(song: Song) {
+    const requestId = ++geniusRequest.current;
     setSelected(song); setLyrics(''); setDetails({});
-    setStatus('曲を選択しました。歌詞の自動取得にはライセンス済みAPIの契約が必要です。');
+    setGeniusUrl(''); setGeniusStatus(''); setGeniusLoading(true);
+    setStatus('曲を選択しました。Geniusの歌詞ページを確認して、歌詞を下欄へ貼り付けてください。');
+    try {
+      const response = await fetch(`/api/genius?song=${encodeURIComponent(song.trackName)}&artist=${encodeURIComponent(song.artistName)}`);
+      if (!response.ok) throw new Error();
+      const payload = await response.json() as { url?: string };
+      if (typeof payload.url !== 'string' || new URL(payload.url).origin !== 'https://genius.com') throw new Error();
+      if (geniusRequest.current === requestId) setGeniusUrl(payload.url);
+    } catch {
+      if (geniusRequest.current === requestId) setGeniusStatus('Geniusの歌詞ページが見つかりませんでした。別の候補を選ぶか、曲名を確認してください。');
+    } finally {
+      if (geniusRequest.current === requestId) setGeniusLoading(false);
+    }
   }
 
   async function fetchMeanings() {
@@ -195,10 +214,10 @@ export default function Home() {
       <section className="space-y-6">
         <div className="panel"><div className="step"><span>1</span><div><h2>曲を探す</h2><p>曲名またはアーティスト名を入力して検索します。</p></div></div>
           <form onSubmit={searchSongs} className="mt-5 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"><Input aria-label="曲名またはアーティスト" value={query} onChange={e => { setQuery(e.target.value); setSongs([]); setSearchStatus(''); }} placeholder="曲名またはアーティスト名" autoComplete="off" enterKeyHint="search" className="h-11"/><Button type="submit" disabled={searching} className="h-11 w-full gap-2 sm:w-auto">{searching ? <LoaderCircle className="animate-spin" size={16}/> : <Search size={17}/>} {searching ? '検索中…' : '検索'}</Button></form>{searchStatus && <p role="status" className="mt-2 text-sm text-muted-foreground">{searchStatus}</p>}
-          {songs.length > 0 && <div className="mt-4"><p className="mb-2 text-xs font-semibold text-muted-foreground">候補</p><div className="grid gap-2 sm:grid-cols-2">{songs.map(song => <button type="button" key={song.trackId} onClick={() => selectSong(song)} className={`song w-full touch-manipulation ${selected?.trackId === song.trackId ? 'selected' : ''}`}><img src={song.artworkUrl100} alt=""/><span><strong>{song.trackName}</strong><small>{song.artistName}</small></span></button>)}</div></div>}
+          {songs.length > 0 && <div className="mt-4"><p className="mb-2 text-xs font-semibold text-muted-foreground">候補</p><div className="grid gap-2 sm:grid-cols-2">{songs.map(song => <button type="button" key={song.trackId} onClick={() => void selectSong(song)} className={`song w-full touch-manipulation ${selected?.trackId === song.trackId ? 'selected' : ''}`}><img src={song.artworkUrl100} alt=""/><span><strong>{song.trackName}</strong><small>{song.artistName}</small></span></button>)}</div></div>}
         </div>
         <div className="panel"><div className="step"><span>2</span><div><h2>歌詞を貼り付ける</h2><p>利用権のある歌詞だけを入力してください。歌詞本文は保存しません。</p></div></div>
-          {selected && <><div className="mt-4 flex items-center gap-3 rounded-xl bg-accent/60 p-3"><img className="size-11 rounded-lg" src={selected.artworkUrl100} alt=""/><div className="min-w-0 flex-1"><strong className="block truncate">{selected.trackName}</strong><span className="text-sm text-muted-foreground">{selected.artistName}</span></div><a aria-label="曲のページを開く" href={selected.trackViewUrl} target="_blank" rel="noreferrer"><ExternalLink size={18}/></a></div><div className="mt-3"><a className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground" href={`https://genius.com/search?q=${encodeURIComponent(`${selected.trackName} ${selected.artistName}`)}`} target="_blank" rel="noreferrer">Geniusで歌詞を確認 <ExternalLink size={14}/></a></div><p className="mt-2 text-xs text-muted-foreground">Geniusで歌詞を確認し、個人学習の範囲で下欄へ貼り付けてください。</p></>}
+          {selected && <><div className="mt-4 flex items-center gap-3 rounded-xl bg-accent/60 p-3"><img className="size-11 rounded-lg" src={selected.artworkUrl100} alt=""/><div className="min-w-0 flex-1"><strong className="block truncate">{selected.trackName}</strong><span className="text-sm text-muted-foreground">{selected.artistName}</span></div><a aria-label="曲のページを開く" href={selected.trackViewUrl} target="_blank" rel="noreferrer"><ExternalLink size={18}/></a></div><div className="mt-3">{geniusUrl ? <a className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground" href={geniusUrl} target="_blank" rel="noreferrer">Geniusで歌詞ページを開く <ExternalLink size={14}/></a> : <Button type="button" disabled className="gap-2">{geniusLoading && <LoaderCircle className="animate-spin" size={16}/>} {geniusLoading ? 'Geniusの歌詞を検索中…' : 'Geniusの歌詞ページなし'}</Button>}</div>{geniusStatus && <p role="status" className="mt-2 text-xs text-muted-foreground">{geniusStatus}</p>}<p className="mt-2 text-xs text-muted-foreground">Geniusの歌詞ページを確認し、個人学習の範囲で下欄へ貼り付けてください。</p></>}
           <Textarea value={lyrics} onChange={e => setLyrics(e.target.value)} className="mt-4 min-h-52 resize-y" placeholder="ここに英語の歌詞を貼り付け…"/><div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground"><span>{lyrics.length.toLocaleString()}文字・{baseWords.length}語</span><label className="flex min-h-11 touch-manipulation items-center gap-2"><input className="size-5" type="checkbox" checked={excludeLearned} onChange={e => setExcludeLearned(e.target.checked)}/>学習済みの{learned.size}語を除外</label></div>
         </div>
       </section>
