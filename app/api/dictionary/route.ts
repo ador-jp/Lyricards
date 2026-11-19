@@ -1,5 +1,9 @@
 import { dailyFallback, parseDictionaryPayload, parseSentencePayload, selectExample, selectMeanings } from '@/lib/vocabulary';
 
+const cache = new Map<string, { expiresAt: number; body: string }>();
+const CACHE_TTL = 60 * 60 * 1000;
+const CACHE_LIMIT = 500;
+
 function delay(ms: number) {
   const { promise, resolve } = Promise.withResolvers<void>();
   setTimeout(resolve, ms);
@@ -9,6 +13,9 @@ function delay(ms: number) {
 export async function GET(request: Request) {
   const word = new URL(request.url).searchParams.get('word')?.toLowerCase();
   if (!word || !/^[a-z]+(?:'[a-z]+)?$/.test(word)) return Response.json({ error: 'Invalid word' }, { status: 400 });
+  const cached = cache.get(word);
+  if (cached && cached.expiresAt > Date.now()) return new Response(cached.body, { headers: { 'content-type': 'application/json' } });
+  cache.delete(word);
 
   const getJson = async (url: string) => {
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -39,7 +46,7 @@ export async function GET(request: Request) {
   const sentences = parseSentencePayload(sentenceResult.data);
   const example = selectExample(word, sentences);
 
-  return Response.json({
+  const body = JSON.stringify({
     word,
     meanings: selected.meanings,
     partOfSpeech,
@@ -47,4 +54,9 @@ export async function GET(request: Request) {
     exampleAuthor: example?.owner ?? '',
     exampleUrl: example ? `https://tatoeba.org/en/sentences/show/${example.id}` : '',
   });
+  if (entries.length && sentenceResult.available && sentences.length) {
+    if (cache.size >= CACHE_LIMIT) cache.delete(cache.keys().next().value!);
+    cache.set(word, { expiresAt: Date.now() + CACHE_TTL, body });
+  }
+  return new Response(body, { headers: { 'content-type': 'application/json' } });
 }
