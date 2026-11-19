@@ -8,6 +8,10 @@ function pendingKey(owner: string, id: string) {
   return pendingPrefix(owner) + id;
 }
 
+function historyKey(owner: string) {
+  return `lyricards.history:${encodeURIComponent(owner)}`;
+}
+
 export function mergeEntries(...lists: Entry[][]): Entry[] {
   const byId = new Map<string, Entry>();
   for (const entries of lists) {
@@ -38,6 +42,21 @@ export function readPendingEntries(storage: Pick<Storage, 'length' | 'key' | 'ge
 
 export function queueEntry(storage: Pick<Storage, 'setItem'>, owner: string, entry: Entry) {
   storage.setItem(pendingKey(owner, entry.id), JSON.stringify(entry));
+}
+
+export function readServerHistory(storage: Pick<Storage, 'getItem'>, owner: string): Entry[] {
+  const raw = storage.getItem(historyKey(owner));
+  if (!raw) return [];
+  try {
+    const entries: unknown = JSON.parse(raw);
+    if (Array.isArray(entries)) return entries.filter(entry => isValidEntry(entry));
+  } catch { /* Ignore an unreadable snapshot. */ }
+  return [];
+}
+
+export function rememberServerEntries(storage: Pick<Storage, 'getItem' | 'setItem'>, owner: string, entries: Entry[]) {
+  if (!entries.length) return;
+  storage.setItem(historyKey(owner), JSON.stringify(mergeEntries(entries, readServerHistory(storage, owner))));
 }
 
 export async function syncPendingEntries(options: {

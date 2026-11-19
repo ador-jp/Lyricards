@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
-import { mergeEntries, queueEntry, readPendingEntries, syncPendingEntries } from './entry-cache.ts';
+import { mergeEntries, queueEntry, readPendingEntries, readServerHistory, rememberServerEntries, syncPendingEntries } from './entry-cache.ts';
 import { ENTRY_OWNER_HEADER, readEntryOwner } from './entry-owner.ts';
 import { isValidEntry } from './entry.ts';
 
@@ -58,6 +58,17 @@ void test('reconnect uploads pending saves once and retries unconfirmed entries'
   await run([entries[3]], { error: 201, interrupted: 201 });
   assert.deepEqual(uploadAttempts.slice(4), ['error', 'interrupted']);
   assert.deepEqual(readPendingEntries(storage, owner), []);
+});
+
+void test('offline history restores confirmed saves for that owner without adding them to the upload queue', () => {
+  const storage = makeStorage();
+  const synced = { ...valid, id: 'synced', createdAt: '2026-01-02T00:00:00.000Z' };
+  rememberServerEntries(storage, 'owner-1', [valid]);
+  rememberServerEntries(storage, 'owner-1', [synced]);
+  rememberServerEntries(storage, 'owner-2', []);
+  assert.deepEqual(readServerHistory(storage, 'owner-1'), [synced, valid]);
+  assert.deepEqual(readPendingEntries(storage, 'owner-1'), []);
+  assert.deepEqual(readServerHistory(storage, 'owner-2'), []);
 });
 
 void test('entry validation accepts minimal and enriched entries without changing them', () => {
@@ -160,6 +171,7 @@ void test('save keeps a rejected draft and distinguishes validation from connect
       geniusRequest: { current: 0 }, extractWords: () => valid.words, mergeEntries, isValidEntry,
       invalidEntryMessage: '保存条件', ownerChangedMessage: '保存先が変わりました', pendingSaveMessage: 'サーバーへの保存を再試行',
       ensureEntryOwner: () => 'owner-1', document: { cookie: `lyricards_owner=${currentOwner}` }, readEntryOwner,
+      cacheServerEntries: () => {},
       savePendingEntry: (owner: string, entry: unknown) => {
         assert.equal(owner, 'owner-1');
         cached.push(entry);

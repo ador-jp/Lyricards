@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { isValidEntry, type Entry } from '@/lib/entry';
-import { mergeEntries, queueEntry, readPendingEntries, syncPendingEntries } from '@/lib/entry-cache';
+import { mergeEntries, queueEntry, readPendingEntries, readServerHistory, rememberServerEntries, syncPendingEntries } from '@/lib/entry-cache';
 import { ENTRY_OWNER_HEADER, entryOwnerCookie, readEntryOwner } from '@/lib/entry-owner';
 import { extractWords, type Word } from '@/lib/vocabulary';
 
@@ -29,6 +29,21 @@ function pendingEntries(owner: string) {
   } catch {
     return [];
   }
+}
+
+function offlineHistory(owner: string) {
+  const pending = pendingEntries(owner);
+  try {
+    return mergeEntries(readServerHistory(localStorage, owner), pending);
+  } catch {
+    return mergeEntries(pending);
+  }
+}
+
+function cacheServerEntries(owner: string, entries: Entry[]) {
+  try {
+    rememberServerEntries(localStorage, owner, entries);
+  } catch { /* Server saves do not require browser storage. */ }
 }
 
 function savePendingEntry(owner: string, entry: Entry) {
@@ -77,7 +92,7 @@ export default function Home() {
       const previousOwner = requestedOwner;
       const owner = requestedOwner = ensureEntryOwner();
       if (previousOwner && previousOwner !== owner) setStatus('');
-      const cached = owner ? mergeEntries(pendingEntries(owner)) : [];
+      const cached = owner ? offlineHistory(owner) : [];
       setHistory(current => current.owner === owner ? current : { owner, entries: cached });
       if (!owner) return;
       try {
@@ -86,6 +101,7 @@ export default function Home() {
         const data = await response.json() as { entries: Entry[] };
         if (!Array.isArray(data.entries)) throw new Error();
         if (signal.aborted || readEntryOwner(document.cookie) !== owner) return;
+        cacheServerEntries(owner, data.entries);
         const pending = pendingEntries(owner);
         setHistory(current => current.owner === owner
           ? { owner, entries: mergeEntries(data.entries, pending, current.entries) }
@@ -93,7 +109,11 @@ export default function Home() {
         if (pending.length) {
           await syncPendingEntries({
             storage: localStorage, owner, pending, remote: data.entries, signal,
-            upload: entry => postEntry(entry, owner, signal),
+            upload: async entry => {
+              const result = await postEntry(entry, owner, signal);
+              if (result.ok) cacheServerEntries(owner, [entry]);
+              return result;
+            },
           });
           if (!signal.aborted && readEntryOwner(document.cookie) === owner && !readPendingEntries(localStorage, owner).length) {
             setStatus(current => current === pendingSaveMessage ? '一時保存していた単語帳をサーバーに保存しました。' : current);
@@ -140,6 +160,7 @@ export default function Home() {
         if (!owner) throw new Error('保存できませんでした');
         const response = await postEntry(entry, owner, lifecycle.signal);
         if (!response.ok || readEntryOwner(document.cookie) !== owner) throw new Error('保存できませんでした');
+        cacheServerEntries(owner, [entry]);
         setHistory(current => ({ owner, entries: mergeEntries([entry], current.owner === owner ? current.entries : []) }));
         return { saved: extracted.length, song: value.song };
       },
@@ -208,6 +229,7 @@ export default function Home() {
       setSaving(false);
       return;
     }
+    if (savedRemotely) cacheServerEntries(owner, [entry]);
     setHistory(current => ({ owner, entries: mergeEntries([entry], current.owner === owner ? current.entries : []) }));
     setQuery(''); setSongs([]); setSearchStatus('');
     geniusRequest.current += 1;
