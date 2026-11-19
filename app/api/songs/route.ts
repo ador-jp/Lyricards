@@ -84,13 +84,13 @@ export async function GET(request: Request) {
     return Response.json({ error: 'Search query must be at least two characters.' }, { status: 400 });
   }
 
-  let results = await searchDeezer(query);
-  if (!results?.length) {
-    const fallbackResults = await searchAppleMusic(query);
-    if (fallbackResults !== null) results = fallbackResults;
-  }
-  if (results === null) {
-    return Response.json({ error: 'Song search is unavailable.' }, { status: 502 });
+  const deezerResults = await searchDeezer(query);
+  const results = deezerResults?.length ? deezerResults : await searchAppleMusic(query);
+  if (results === null || (!results.length && deezerResults === null)) {
+    return Response.json(
+      { error: 'Song search is unavailable.' },
+      { status: 502, headers: { 'cache-control': 'no-store' } },
+    );
   }
   return Response.json(
     { results },
