@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
-import { mergeEntries, queueEntry, readPendingEntries, readServerHistory, rememberServerEntries, syncPendingEntries } from './entry-cache.ts';
+import { mergeEntries, queueEntry, readPendingEntries, readServerHistory, rememberServerEntries, saveResponseAction, syncPendingEntries } from './entry-cache.ts';
 import { ENTRY_OWNER_HEADER, readEntryOwner } from './entry-owner.ts';
 import { isValidEntry } from './entry.ts';
 
@@ -52,12 +52,60 @@ void test('reconnect uploads pending saves once and retries unconfirmed entries'
   });
   await run([entries[0]], { offline: 201, error: 503, conflict: 409 });
   assert.deepEqual(uploadAttempts, ['offline', 'error', 'conflict', 'interrupted']);
-  assert.deepEqual(readPendingEntries(storage, owner), entries.slice(2));
+  assert.deepEqual(readPendingEntries(storage, owner), [entries[2], entries[4]]);
   assert.equal(readPendingEntries(storage, 'owner-2').length, 1);
 
   await run([entries[3]], { error: 201, interrupted: 201 });
   assert.deepEqual(uploadAttempts.slice(4), ['error', 'interrupted']);
   assert.deepEqual(readPendingEntries(storage, owner), []);
+});
+
+void test('save response decisions distinguish permanent rejection from retryable failures', () => {
+  for (let status = 200; status < 300; status++) assert.equal(saveResponseAction(status), 'saved');
+  for (let status = 400; status < 500; status++) {
+    assert.equal(saveResponseAction(status), status === 408 || status === 429 ? 'retry' : 'reject');
+  }
+  for (let status = 500; status < 600; status++) assert.equal(saveResponseAction(status), 'retry');
+  assert.equal(saveResponseAction(302), 'retry');
+});
+
+void test('sync reports and removes permanent rejections without retrying them or claiming ownership', async () => {
+  for (const status of [400, 401, 403, 404, 409, 412, 422]) {
+    const storage = makeStorage();
+    queueEntry(storage, 'owner', valid);
+    const rejected: unknown[] = [];
+    let attempts = 0;
+    const run = () => syncPendingEntries({
+      storage, owner: 'owner', pending: readPendingEntries(storage, 'owner'), remote: [],
+      signal: new AbortController().signal,
+      upload: async () => { attempts++; return new Response(null, { status }); },
+      onRejected: entry => rejected.push(entry),
+    });
+    await run();
+    await run();
+    assert.equal(attempts, 1);
+    assert.deepEqual(rejected, [valid]);
+    assert.deepEqual(readPendingEntries(storage, 'owner'), []);
+    assert.deepEqual(readServerHistory(storage, 'owner'), []);
+  }
+});
+
+void test('sync retains transient failures and does not mutate an aborted upload', async () => {
+  for (const status of [408, 429, 500, 503, null, 400]) {
+    const storage = makeStorage();
+    queueEntry(storage, 'owner', valid);
+    const controller = new AbortController();
+    await syncPendingEntries({
+      storage, owner: 'owner', pending: [valid], remote: [], signal: controller.signal,
+      upload: async () => {
+        if (status === null) throw new TypeError('Offline');
+        if (status === 400) controller.abort();
+        return new Response(null, { status });
+      },
+      onRejected: () => assert.fail('Must not report a rejection'),
+    });
+    assert.deepEqual(readPendingEntries(storage, 'owner'), [valid]);
+  }
 });
 
 void test('offline history restores confirmed saves for that owner without adding them to the upload queue', () => {

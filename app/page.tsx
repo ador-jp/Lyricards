@@ -69,6 +69,7 @@ export default function Home() {
   const [lyrics, setLyrics] = useState('');
   const [{ entries }, setHistory] = useState<{ owner: string | null; entries: Entry[] }>({ owner: null, entries: [] });
   const [status, setStatus] = useState('');
+  const [syncWarning, setSyncWarning] = useState('');
   const [searchStatus, setSearchStatus] = useState('');
   const [searching, setSearching] = useState(false);
   const [geniusUrl, setGeniusUrl] = useState('');
@@ -91,7 +92,7 @@ export default function Home() {
       const { signal } = active = new AbortController();
       const previousOwner = requestedOwner;
       const owner = requestedOwner = ensureEntryOwner();
-      if (previousOwner && previousOwner !== owner) setStatus('');
+      if (previousOwner && previousOwner !== owner) { setStatus(''); setSyncWarning(''); }
       const cached = owner ? offlineHistory(owner) : [];
       setHistory(current => current.owner === owner ? current : { owner, entries: cached });
       if (!owner) return;
@@ -109,6 +110,14 @@ export default function Home() {
         if (pending.length) {
           await syncPendingEntries({
             storage: localStorage, owner, pending, remote: data.entries, signal,
+            onRejected: entry => {
+              if (readEntryOwner(document.cookie) !== owner) return;
+              setSyncWarning(current => `${current ? `${current}\n` : ''}「${entry.song}」はサーバーに保存を拒否されたため、自動再試行を停止しました。内容や保存済みの単語帳を確認してください。`);
+              setHistory(current => current.owner === owner
+                ? { owner, entries: current.entries.filter(item => item.id !== entry.id) }
+                : current);
+              setStatus(current => current === pendingSaveMessage ? '' : current);
+            },
             upload: async entry => {
               const result = await postEntry(entry, owner, signal);
               if (result.ok) cacheServerEntries(owner, [entry]);
@@ -364,6 +373,7 @@ export default function Home() {
         <div className="mt-4 min-h-44 space-y-2 lg:max-h-[52vh] lg:overflow-y-auto lg:pr-1">{words.length ? words.map(({word, meaning, meanings, partOfSpeech, example, exampleAuthor, exampleUrl}) => <div className="word" key={word}><div className="flex items-baseline gap-2"><strong>{word}</strong>{partOfSpeech && <small>{partOfSpeech}</small>}</div><ol className="meaning">{(meanings ?? [meaning ?? '']).filter(Boolean).map((item, index) => <li key={item}>{index + 1}. {item}</li>)}</ol><p>例: {example || '日常例文が見つかりませんでした'}</p>{exampleUrl && <a className="source" href={exampleUrl} target="_blank" rel="noreferrer">Tatoeba / {exampleAuthor || 'contributor'} · CC BY 2.0 FR</a>}</div>) : <div className="empty"><Sparkles size={26}/><p>歌詞を入力すると<br/>未学習の全単語が並びます</p></div>}</div>
         <Button onClick={save} disabled={saving || loading} className="mt-5 h-11 w-full">{saving ? '保存中…' : '単語帳に保存'}</Button>
         {status && <output className="mt-3 block text-sm text-muted-foreground">{status}</output>}
+        {syncWarning && <p role="alert" className="mt-3 whitespace-pre-line text-sm text-muted-foreground">{syncWarning}</p>}
         <div className="mt-6 border-t pt-5"><div className="flex items-center justify-between"><span className="text-sm font-semibold">保存済み</span><span className="text-sm text-muted-foreground">{entries.reduce((n, e) => n + e.words.length, 0)}語</span></div>{entries.slice(0, 3).map(entry => <p key={entry.id} className="mt-2 truncate text-xs text-muted-foreground">✓ {entry.song} — {entry.artist}（{entry.words.length}語）</p>)}<Button variant="outline" onClick={downloadCsv} disabled={!entries.length && !words.length} className="mt-3 w-full gap-2"><Download size={16}/>CSVを書き出す</Button><p className="mt-2 text-xs leading-relaxed text-muted-foreground">未保存の解析結果もCSVに含めます。Google Sheetsでそのまま読み込めます。</p></div>
       </aside>
     </div>

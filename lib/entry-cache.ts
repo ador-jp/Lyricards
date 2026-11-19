@@ -59,6 +59,12 @@ export function rememberServerEntries(storage: Pick<Storage, 'getItem' | 'setIte
   storage.setItem(historyKey(owner), JSON.stringify(mergeEntries(entries, readServerHistory(storage, owner))));
 }
 
+export function saveResponseAction(status: number): 'saved' | 'reject' | 'retry' {
+  if (status >= 200 && status < 300) return 'saved';
+  if (status >= 400 && status < 500 && status !== 408 && status !== 429) return 'reject';
+  return 'retry';
+}
+
 export async function syncPendingEntries(options: {
   storage: Pick<Storage, 'removeItem'>;
   owner: string;
@@ -66,15 +72,19 @@ export async function syncPendingEntries(options: {
   remote: Entry[];
   upload: (entry: Entry) => Promise<Response>;
   signal: AbortSignal;
+  onRejected?: (entry: Entry) => void;
 }) {
   const { storage, owner, pending, remote, upload, signal } = options;
   const savedIds = new Set(remote.map(entry => entry.id));
   for (const entry of pending) {
     if (signal.aborted) return;
     try {
-      // A 409 alone does not establish that the entry belongs to this owner.
-      if (savedIds.has(entry.id) || (await upload(entry)).ok) {
+      const action = savedIds.has(entry.id) ? 'saved' : saveResponseAction((await upload(entry)).status);
+      if (signal.aborted) return;
+      if (action !== 'retry') {
         storage.removeItem(pendingKey(owner, entry.id));
+        // A 409 alone does not establish that the entry belongs to this owner.
+        if (action === 'reject') options.onRejected?.(entry);
       }
     } catch {
       // Keep the pending save for the next reconnect or reload.
