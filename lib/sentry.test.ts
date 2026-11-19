@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
-import { sentryOptions, shouldTrace } from './sentry.ts';
+import { sentryOptions, shouldTrace, stripRequestCredentials } from './sentry.ts';
 
 void test('only API requests with a runtime DSN enable Sentry', () => {
   for (const route of ['dictionary', 'entries', 'genius', 'songs']) {
@@ -78,6 +78,7 @@ void test('worker preserves bypass responses and instruments vinext fetch succes
 void test('sampling and environment have safe defaults and accept runtime overrides', () => {
   assert.deepEqual(sentryOptions({}), {
     dsn: undefined, environment: 'production', tracesSampleRate: 1, tracePropagationTargets: [],
+    sendDefaultPii: false, beforeSend: stripRequestCredentials, beforeSendTransaction: stripRequestCredentials,
   });
   assert.equal(sentryOptions({ SENTRY_DSN: 'runtime-dsn' }).dsn, 'runtime-dsn');
   assert.equal(sentryOptions({ SENTRY_ENVIRONMENT: ' staging ' }).environment, 'staging');
@@ -87,5 +88,24 @@ void test('sampling and environment have safe defaults and accept runtime overri
   }
   for (const value of ['', ' ', 'bad', '-1', '1.1', 'Infinity']) {
     assert.equal(sentryOptions({ SENTRY_TRACES_SAMPLE_RATE: value }).tracesSampleRate, 1);
+  }
+});
+
+void test('both event hooks remove request cookies and credential headers case-insensitively', () => {
+  const options = sentryOptions({});
+  for (const hook of [options.beforeSend, options.beforeSendTransaction]) {
+    const event = { request: { cookies: { owner: 'private-owner' }, headers: {
+      Cookie: 'owner=private-owner', cookie: 'private-owner', AUTHORIZATION: 'Bearer private-token',
+      'X-Lyricards-Entry-Owner': 'private-owner', accept: 'application/json',
+    } } };
+    assert.equal(hook(event), event);
+    assert.deepEqual(event.request, { headers: { accept: 'application/json' } });
+    assert.deepEqual(hook({}), {});
+    assert.deepEqual(hook({ request: {} }), { request: {} });
+    const data = { 'http.request.header.cookie.lyricards_owner': 'private-owner',
+      'http.request.header.authorization': 'private-token', 'http.request.header.x_lyricards_entry_owner': 'private-owner', safe: true };
+    const traced = hook({ contexts: { trace: { trace_id: 'trace', span_id: 'span', data: { ...data } } }, spans: [{ trace_id: 'trace', span_id: 'span', start_timestamp: 1, data: { ...data } }] });
+    assert.deepEqual(traced.contexts.trace.data, { safe: true });
+    assert.deepEqual(traced.spans[0].data, { safe: true });
   }
 });
