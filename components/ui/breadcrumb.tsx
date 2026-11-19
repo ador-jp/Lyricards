@@ -63,6 +63,7 @@ function BreadcrumbPage({ className, ...props }: React.ComponentProps<'span'>) {
   return (
     <span
       data-slot="breadcrumb-page"
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- Announce the current item as a disabled link without adding a navigation target.
       role="link"
       aria-disabled="true"
       aria-current="page"

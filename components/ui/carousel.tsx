@@ -95,6 +95,7 @@ function Carousel({
 
   React.useEffect(() => {
     if (!api) return;
+    // oxlint-disable-next-line react/react-compiler -- Read the initial scroll state when the Embla API is ready.
     onSelect(api);
     api.on('reInit', onSelect);
     api.on('select', onSelect);
@@ -121,6 +122,7 @@ function Carousel({
       <div
         onKeyDownCapture={handleKeyDown}
         className={cn('relative', className)}
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- Keep the keyboard-handling carousel wrapper as a div.
         role="region"
         aria-roledescription="carousel"
         data-slot="carousel"
@@ -158,6 +160,7 @@ function CarouselItem({ className, ...props }: React.ComponentProps<'div'>) {
 
   return (
     <div
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- Slides can contain arbitrary content.
       role="group"
       aria-roledescription="slide"
       data-slot="carousel-item"

@@ -75,7 +75,7 @@ export default function Home() {
     return () => lifecycle.abort();
   }, []);
 
-  async function searchSongs(e: React.FormEvent) {
+  async function searchSongs(e: React.SubmitEvent<HTMLFormElement>) {
     e.preventDefault();
     const term = query.trim();
     if (term.length < 2) return setSearchStatus('2文字以上入力してください。');
@@ -202,7 +202,7 @@ export default function Home() {
     const csv = rows.map(row => row.map(v => `"${v.replace(/"/g, '""')}"`).join(',')).join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
-    a.download = 'lyricards.csv'; document.body.append(a); a.click(); a.remove();
+    a.download = 'lyricards.csv'; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
@@ -213,18 +213,35 @@ export default function Home() {
     <div className="mx-auto grid max-w-7xl gap-4 px-3 py-4 sm:gap-6 sm:px-5 sm:py-7 lg:grid-cols-[minmax(0,1fr)_360px]">
       <section className="space-y-6">
         <div className="panel"><div className="step"><span>1</span><div><h2>曲を探す</h2><p>曲名またはアーティスト名を入力して検索します。</p></div></div>
-          <form onSubmit={searchSongs} className="mt-5 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"><Input aria-label="曲名またはアーティスト" value={query} onChange={e => { setQuery(e.target.value); setSongs([]); setSearchStatus(''); }} placeholder="曲名またはアーティスト名" autoComplete="off" enterKeyHint="search" className="h-11"/><Button type="submit" disabled={searching} className="h-11 w-full gap-2 sm:w-auto">{searching ? <LoaderCircle className="animate-spin" size={16}/> : <Search size={17}/>} {searching ? '検索中…' : '検索'}</Button></form>{searchStatus && <p role="status" className="mt-2 text-sm text-muted-foreground">{searchStatus}</p>}
-          {songs.length > 0 && <div className="mt-4"><p className="mb-2 text-xs font-semibold text-muted-foreground">候補</p><div className="grid gap-2 sm:grid-cols-2">{songs.map(song => <button type="button" key={song.trackId} onClick={() => void selectSong(song)} className={`song w-full touch-manipulation ${selected?.trackId === song.trackId ? 'selected' : ''}`}><img src={song.artworkUrl100} alt=""/><span><strong>{song.trackName}</strong><small>{song.artistName}</small></span></button>)}</div></div>}
+          <form onSubmit={searchSongs} className="mt-5 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"><Input aria-label="曲名またはアーティスト" value={query} onChange={e => { setQuery(e.target.value); setSongs([]); setSearchStatus(''); }} placeholder="曲名またはアーティスト名" autoComplete="off" enterKeyHint="search" className="h-11"/><Button type="submit" disabled={searching} className="h-11 w-full gap-2 sm:w-auto">{searching ? <LoaderCircle className="animate-spin" size={16}/> : <Search size={17}/>} {searching ? '検索中…' : '検索'}</Button></form>
+          {searchStatus && <output className="mt-2 block text-sm text-muted-foreground">{searchStatus}</output>}
+          {songs.length > 0 && <div className="mt-4"><p className="mb-2 text-xs font-semibold text-muted-foreground">候補</p><div className="grid gap-2 sm:grid-cols-2">
+            {songs.map(song => <button type="button" key={song.trackId} aria-label={`${song.trackName} ${song.artistName}`} onClick={() => void selectSong(song)} className={`song w-full touch-manipulation ${selected?.trackId === song.trackId ? 'selected' : ''}`}>
+              {/* oxlint-disable-next-line next/no-img-element -- Load API-provided artwork directly from its provider. */}
+              <img src={song.artworkUrl100} alt=""/>
+              <span><strong>{song.trackName}</strong><small>{song.artistName}</small></span>
+            </button>)}
+          </div></div>}
         </div>
         <div className="panel"><div className="step"><span>2</span><div><h2>歌詞を貼り付ける</h2><p>利用権のある歌詞だけを入力してください。歌詞本文は保存しません。</p></div></div>
-          {selected && <><div className="mt-4 flex items-center gap-3 rounded-xl bg-accent/60 p-3"><img className="size-11 rounded-lg" src={selected.artworkUrl100} alt=""/><div className="min-w-0 flex-1"><strong className="block truncate">{selected.trackName}</strong><span className="text-sm text-muted-foreground">{selected.artistName}</span></div><a aria-label="曲のページを開く" href={selected.trackViewUrl} target="_blank" rel="noreferrer"><ExternalLink size={18}/></a></div><div className="mt-3">{geniusUrl ? <a className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground" href={geniusUrl} target="_blank" rel="noreferrer">Geniusで歌詞ページを開く <ExternalLink size={14}/></a> : <Button type="button" disabled className="gap-2">{geniusLoading && <LoaderCircle className="animate-spin" size={16}/>} {geniusLoading ? 'Geniusの歌詞を検索中…' : 'Geniusの歌詞ページなし'}</Button>}</div>{geniusStatus && <p role="status" className="mt-2 text-xs text-muted-foreground">{geniusStatus}</p>}<p className="mt-2 text-xs text-muted-foreground">Geniusの歌詞ページを確認し、個人学習の範囲で下欄へ貼り付けてください。</p></>}
+          {selected && <>
+            <div className="mt-4 flex items-center gap-3 rounded-xl bg-accent/60 p-3">
+              {/* oxlint-disable-next-line next/no-img-element -- Load API-provided artwork directly from its provider. */}
+              <img className="size-11 rounded-lg" src={selected.artworkUrl100} alt=""/>
+              <div className="min-w-0 flex-1"><strong className="block truncate">{selected.trackName}</strong><span className="text-sm text-muted-foreground">{selected.artistName}</span></div><a aria-label="曲のページを開く" href={selected.trackViewUrl} target="_blank" rel="noreferrer"><ExternalLink size={18}/></a>
+            </div>
+            <div className="mt-3">{geniusUrl ? <a className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground" href={geniusUrl} target="_blank" rel="noreferrer">Geniusで歌詞ページを開く <ExternalLink size={14}/></a> : <Button type="button" disabled className="gap-2">{geniusLoading && <LoaderCircle className="animate-spin" size={16}/>} {geniusLoading ? 'Geniusの歌詞を検索中…' : 'Geniusの歌詞ページなし'}</Button>}</div>
+            {geniusStatus && <output className="mt-2 block text-xs text-muted-foreground">{geniusStatus}</output>}
+            <p className="mt-2 text-xs text-muted-foreground">Geniusの歌詞ページを確認し、個人学習の範囲で下欄へ貼り付けてください。</p>
+          </>}
           <Textarea value={lyrics} onChange={e => setLyrics(e.target.value)} className="mt-4 min-h-52 resize-y" placeholder="ここに英語の歌詞を貼り付け…"/><div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground"><span>{lyrics.length.toLocaleString()}文字・{baseWords.length}語</span><label className="flex min-h-11 touch-manipulation items-center gap-2"><input className="size-5" type="checkbox" checked={excludeLearned} onChange={e => setExcludeLearned(e.target.checked)}/>学習済みの{learned.size}語を除外</label></div>
         </div>
       </section>
       <aside className="panel h-fit lg:sticky lg:top-6"><div className="step"><span>3</span><div><h2>単語帳にする</h2><p>全単語の意味と用例を取得します。</p></div></div>
         <Button variant="outline" onClick={fetchMeanings} disabled={!baseWords.length || loading} className="mt-5 h-11 w-full gap-2">{loading && <LoaderCircle className="animate-spin" size={16}/>}全{baseWords.length}語の意味・例文を取得</Button>
         <div className="mt-4 min-h-44 space-y-2 lg:max-h-[52vh] lg:overflow-y-auto lg:pr-1">{words.length ? words.map(({word, meaning, meanings, partOfSpeech, example, exampleAuthor, exampleUrl}) => <div className="word" key={word}><div className="flex items-baseline gap-2"><strong>{word}</strong>{partOfSpeech && <small>{partOfSpeech}</small>}</div><ol className="meaning">{(meanings ?? [meaning ?? '']).filter(Boolean).map((item, index) => <li key={item}>{index + 1}. {item}</li>)}</ol><p>例: {example || '日常例文が見つかりませんでした'}</p>{exampleUrl && <a className="source" href={exampleUrl} target="_blank" rel="noreferrer">Tatoeba / {exampleAuthor || 'contributor'} · CC BY 2.0 FR</a>}</div>) : <div className="empty"><Sparkles size={26}/><p>歌詞を入力すると<br/>未学習の全単語が並びます</p></div>}</div>
-        <Button onClick={save} disabled={saving || loading} className="mt-5 h-11 w-full">{saving ? '保存中…' : '単語帳に保存'}</Button>{status && <p role="status" className="mt-3 text-sm text-muted-foreground">{status}</p>}
+        <Button onClick={save} disabled={saving || loading} className="mt-5 h-11 w-full">{saving ? '保存中…' : '単語帳に保存'}</Button>
+        {status && <output className="mt-3 block text-sm text-muted-foreground">{status}</output>}
         <div className="mt-6 border-t pt-5"><div className="flex items-center justify-between"><span className="text-sm font-semibold">保存済み</span><span className="text-sm text-muted-foreground">{entries.reduce((n, e) => n + e.words.length, 0)}語</span></div>{entries.slice(0, 3).map(entry => <p key={entry.id} className="mt-2 truncate text-xs text-muted-foreground">✓ {entry.song} — {entry.artist}（{entry.words.length}語）</p>)}<Button variant="outline" onClick={downloadCsv} disabled={!entries.length && !words.length} className="mt-3 w-full gap-2"><Download size={16}/>CSVを書き出す</Button><p className="mt-2 text-xs leading-relaxed text-muted-foreground">未保存の解析結果もCSVに含めます。Google Sheetsでそのまま読み込めます。</p></div>
       </aside>
     </div>
