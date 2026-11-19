@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers';
+import { isValidEntry } from '@/lib/entry';
 
 type StoredEntry = { id: string; song: string; artist: string; words: unknown[]; createdAt: string };
 const COOKIE = 'lyricards_owner';
@@ -26,10 +27,15 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const owner = ownerId(request);
+  let value: unknown;
+  try {
+    value = await request.json();
+  } catch {
+    return response({ error: '保存する単語帳が不正です。' }, owner, 400);
+  }
+  if (!isValidEntry(value)) return response({ error: '保存する単語帳が不正です。' }, owner, 400);
   const db = (env as unknown as { DB?: D1Database }).DB;
   if (!db) return response({ error: '保存機能の準備中です。' }, owner, 503);
-  const value = await request.json() as Partial<StoredEntry>;
-  if (!value.id || !value.song || !value.artist || !Array.isArray(value.words) || !value.words.length || !value.createdAt) return response({ error: '保存する単語帳が不正です。' }, owner, 400);
   await db.prepare('INSERT INTO entries (id, owner_id, song, artist, words_json, created_at) VALUES (?, ?, ?, ?, ?, ?)').bind(value.id, owner, value.song, value.artist, JSON.stringify(value.words), value.createdAt).run();
   return response({ saved: true }, owner, 201);
 }
