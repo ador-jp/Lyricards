@@ -282,27 +282,35 @@ export default function Home() {
       }
       return { result: item, resolved: false };
     };
+    let batchFailed = false;
+    let nextLookupAt = 0;
     const runBatch = async (items: Word[], retrying: boolean) => {
       let cursor = 0; let done = 0;
       const unresolved: Word[] = [];
       const remaining: Word[] = [];
       for (let offset = 0; offset < items.length; offset += 20) {
+        if (batchFailed) {
+          remaining.push(...items.slice(offset));
+          break;
+        }
         const chunk = items.slice(offset, offset + 20);
         const requested = new Set(chunk.map(item => item.word));
         const received = new Map<string, Word>();
         try {
           const response = await fetch('/api/dictionary', {
             method: 'POST', headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ words: chunk.map(item => item.word) }), signal: AbortSignal.timeout(15_000),
+            body: JSON.stringify({ words: chunk.map(item => item.word) }), signal: AbortSignal.timeout(3_500),
           });
-          if (response.ok) {
-            const payload = await response.json() as { results?: Word[] };
-            if (Array.isArray(payload.results)) for (const result of payload.results) {
-              if (requested.has(result.word) && result.meanings?.length && result.partOfSpeech && result.exampleUrl) received.set(result.word, result);
-            }
+          if (!response.ok) throw new Error('Batch unavailable');
+          const payload = await response.json() as { results?: Word[] };
+          if (!Array.isArray(payload?.results)) throw new Error('Invalid batch');
+          for (const result of payload.results) {
+            if (requested.has(result.word) && result.meanings?.length && result.partOfSpeech && result.exampleUrl) received.set(result.word, result);
           }
+          if (!received.size) batchFailed = true;
         } catch {
           // Individual lookups retain retries when the batch is unavailable.
+          batchFailed = true;
         }
         setDetails(current => ({ ...current, ...Object.fromEntries(received) }));
         done += received.size;
@@ -312,6 +320,12 @@ export default function Home() {
       const worker = async () => {
         while (cursor < remaining.length) {
           const item = remaining[cursor++];
+          if (batchFailed) {
+            const now = Date.now();
+            const wait = Math.max(0, nextLookupAt - now);
+            nextLookupAt = Math.max(now, nextLookupAt) + 1_100;
+            if (wait) await new Promise<void>(resolve => setTimeout(resolve, wait));
+          }
           const { result, resolved } = await lookup(item);
           setDetails(current => {
             const hasData = Boolean(result.partOfSpeech || result.meaning || result.meanings?.length || result.example);
@@ -322,7 +336,7 @@ export default function Home() {
           setStatus(`${done} / ${items.length}語を${retrying ? '再取得' : '取得'}中…`);
         }
       };
-      await worker();
+      await Promise.all(Array.from({ length: Math.min(batchFailed ? 4 : 1, remaining.length) }, worker));
       return unresolved;
     };
     try {

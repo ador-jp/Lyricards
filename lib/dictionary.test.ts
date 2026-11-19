@@ -129,9 +129,33 @@ void test('batch dictionary leaves missing, malformed and unsafe examples for in
 });
 
 void test('batch dictionary returns a controlled error when sentence service fails', async t => {
-  t.mock.method(globalThis, 'fetch', async (url: string) => url.includes('datamuse') ? Response.json(dictionary) : new Response('', { status: 503 }));
+  const calls: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (url: string) => {
+    calls.push(url);
+    return url.includes('datamuse') ? Response.json(dictionary) : new Response('', { status: 503 });
+  });
   const response = await POST(new Request('https://example.test/api/dictionary', { method: 'POST', body: JSON.stringify({ words: ['dream'] }) }));
   assert.equal(response.status, 502);
+  assert.equal(calls.filter(url => url.includes('tatoeba')).length, 1);
+});
+
+void test('batch deadline aborts upstream work without retrying', async t => {
+  const controller = new AbortController();
+  const timeouts: number[] = [];
+  t.mock.method(AbortSignal, 'timeout', (ms: number) => { timeouts.push(ms); return controller.signal; });
+  const calls: string[] = [];
+  t.mock.method(globalThis, 'fetch', (url: string, init: RequestInit) => {
+    calls.push(url);
+    return new Promise<Response>((_resolve, reject) => {
+      init.signal!.addEventListener('abort', () => reject(init.signal!.reason), { once: true });
+    });
+  });
+  const pending = POST(new Request('https://example.test/api/dictionary', { method: 'POST', body: JSON.stringify({ words: ['dream'] }) }));
+  await new Promise(resolve => setImmediate(resolve));
+  controller.abort();
+  assert.equal((await pending).status, 502);
+  assert.deepEqual(timeouts, [3_000]);
+  assert.equal(calls.length, 2);
 });
 
 const page = readFileSync(new URL('../app/page.tsx', import.meta.url), 'utf8');
@@ -149,7 +173,9 @@ for (const batchState of ['success', 'empty', 'error']) {
       setLoading: (value: boolean) => loading.push(value),
       setStatus: (value: string) => statuses.push(value),
       setDetails: (update: (current: Record<string, unknown>) => Record<string, unknown>) => Object.assign(details, update(details)),
-      AbortController, AbortSignal, setTimeout: () => 0, clearTimeout: () => {},
+      AbortController, AbortSignal,
+      setTimeout: (callback: () => void, ms: number) => { if (ms !== 15_000) queueMicrotask(callback); return 0; },
+      clearTimeout: () => {},
       fetch: async (url: string) => {
         urls.push(url);
         if (url === '/api/dictionary') {
@@ -184,3 +210,41 @@ void test('client skips empty lists and bounds batch sizes', async () => {
   }
   assert.deepEqual(calls, [20, 20, 1]);
 });
+
+for (const failure of ['http', 'timeout', 'empty', 'malformed']) {
+  void test(`client ${failure} batch failure disables batches and restores four GET workers`, async () => {
+    let posts = 0; let active = 0; let peak = 0;
+    const waits: number[] = [];
+    const details: Record<string, unknown> = {};
+    const statuses: string[] = [];
+    const timeouts: number[] = [];
+    await runInNewContext(`${fetchMeaningsSource}; fetchMeanings();`, {
+      baseWords: Array.from({ length: 30 }, (_, index) => ({ word: `word${index}`, example: '' })),
+      setLoading: () => {}, setStatus: (value: string) => statuses.push(value),
+      setDetails: (update: (current: Record<string, unknown>) => Record<string, unknown>) => Object.assign(details, update(details)),
+      AbortController, AbortSignal: { timeout: (ms: number) => { timeouts.push(ms); return new AbortController().signal; } },
+      Date: { now: () => 0 },
+      setTimeout: (callback: () => void, ms: number) => { if (ms !== 15_000) { waits.push(ms); queueMicrotask(callback); } return 0; },
+      clearTimeout: () => {},
+      fetch: async (url: string) => {
+        if (url === '/api/dictionary') {
+          posts++;
+          if (failure === 'timeout') throw new Error('Timeout');
+          return Response.json(failure === 'malformed' ? null : { results: [] }, { status: failure === 'http' ? 502 : 200 });
+        }
+        active++; peak = Math.max(peak, active);
+        await new Promise(resolve => setImmediate(resolve));
+        active--;
+        const word = new URL(url, 'https://example.test').searchParams.get('word');
+        return Response.json({ word, meanings: ['A meaning.'], partOfSpeech: 'noun', example: 'An example.' });
+      },
+    });
+    assert.equal(posts, 1);
+    assert.equal(peak, 4);
+    assert.deepEqual(waits.slice(0, 3), [1_100, 2_200, 3_300]);
+    assert.equal(waits.length, 29);
+    assert.deepEqual(timeouts, [3_500]);
+    assert.equal(Object.keys(details).length, 30);
+    assert.match(statuses.at(-1)!, /^30語の意味と例文を取得しました/);
+  });
+}

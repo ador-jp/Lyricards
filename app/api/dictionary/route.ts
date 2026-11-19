@@ -23,14 +23,15 @@ export async function GET(request: Request) {
   return Response.json(makeWord(word, entries[0], parseSentencePayload(sentenceResult.data)));
 }
 
-async function getJson(url: string) {
+async function getJson(url: string, signal?: AbortSignal) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const response = await fetchUpstream(url);
+      const response = await (signal ? fetch(url, { headers: { accept: 'application/json' }, signal }) : fetchUpstream(url));
       if (response.ok) return { available: true, data: await response.json() };
     } catch {
       // Retry transient upstream and JSON parsing failures once.
     }
+    if (signal) break;
     if (attempt === 0) await delay(200);
   }
   return { available: false, data: null };
@@ -66,14 +67,15 @@ export async function POST(request: Request) {
     return Response.json({ error: 'Invalid words' }, { status: 400 });
   }
   const words = [...new Set(values.map(word => word.toLowerCase()))];
+  const signal = AbortSignal.any([request.signal, AbortSignal.timeout(3_000)]);
   const query = `(${words.join(' | ')}) (I | you | we | they | please | can | could | would)`;
-  const sentencesPending = getJson(`https://api.tatoeba.org/v1/sentences?lang=eng&q=${encodeURIComponent(query)}&is_unapproved=no&is_orphan=no&word_count=4-12&sort=relevance&limit=500`);
+  const sentencesPending = getJson(`https://api.tatoeba.org/v1/sentences?lang=eng&q=${encodeURIComponent(query)}&is_unapproved=no&is_orphan=no&word_count=4-12&sort=relevance&limit=500`, signal);
   const dictionaries = new Map<string, Awaited<ReturnType<typeof getJson>>>();
   let cursor = 0;
   await Promise.all(Array.from({ length: Math.min(4, words.length) }, async () => {
-    while (cursor < words.length) {
+    while (cursor < words.length && !signal.aborted) {
       const word = words[cursor++];
-      dictionaries.set(word, await getJson(`https://api.datamuse.com/words?sp=${encodeURIComponent(word)}&qe=sp&md=dp&max=1`));
+      dictionaries.set(word, await getJson(`https://api.datamuse.com/words?sp=${encodeURIComponent(word)}&qe=sp&md=dp&max=1`, signal));
     }
   }));
   const sentenceResult = await sentencesPending;
