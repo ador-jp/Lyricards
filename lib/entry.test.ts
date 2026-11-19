@@ -3,9 +3,38 @@ import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
+import { mergeEntries, readCachedEntries, writeCachedEntries } from './entry-cache.ts';
 import { isValidEntry } from './entry.ts';
 
 const valid = { id: 'entry-1', song: 'Song', artist: 'Artist', createdAt: '2026-01-01T00:00:00.000Z', words: [{ word: 'dream', example: '' }] };
+
+void test('merging the server history does not discard or duplicate browser saves', () => {
+  const offline = { ...valid, id: 'offline', createdAt: '2026-01-02T00:00:00.000Z' };
+  const remote = { ...valid, song: 'Server copy' };
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+  };
+  writeCachedEntries(storage, [valid, offline]);
+  const merged = mergeEntries([remote], readCachedEntries(storage));
+  assert.deepEqual(merged, [offline, remote]);
+  writeCachedEntries(storage, merged);
+  assert.deepEqual(readCachedEntries(storage), [offline, remote]);
+});
+
+void test('the cache reads older entries without applying current server size caps', () => {
+  const large = { ...valid, words: Array(1001).fill(valid.words[0]) };
+  const values = new Map([
+    ['lyricards.entries', '{'],
+    ['lylicards.entries', JSON.stringify([null, large])],
+  ]);
+  const storage = { getItem: (key: string) => values.get(key) ?? null };
+  assert.deepEqual(readCachedEntries(storage), [large]);
+  values.delete('lylicards.entries');
+  values.set('lyricbook.entries', JSON.stringify([valid]));
+  assert.deepEqual(readCachedEntries(storage), [valid]);
+});
 
 void test('entry validation accepts minimal and enriched entries without changing them', () => {
   assert.equal(isValidEntry(valid), true);
@@ -87,12 +116,17 @@ void test('POST rejects invalid JSON and entries without calling D1, and preserv
 void test('save keeps a rejected draft and distinguishes validation from connectivity failures', async () => {
   const source = readFileSync(new URL('../app/page.tsx', import.meta.url), 'utf8');
   const save = source.slice(source.indexOf('  async function save()'), source.indexOf('  async function selectSong('));
-  for (const status of [201, 400, 409, 503]) {
+  for (const [status, cacheAvailable] of [[201, false], [400, true], [409, true], [503, true], [503, false], [null, true]] as const) {
     const calls: Record<string, unknown[]> = {};
+    const cached: unknown[] = [];
     const state: Record<string, unknown> = {
       selected: { trackName: 'Song', artistName: 'Artist' }, lyrics: 'dream', words: valid.words,
-      geniusRequest: { current: 0 }, extractWords: () => valid.words,
-      fetch: async () => new Response(null, { status }),
+      geniusRequest: { current: 0 }, extractWords: () => valid.words, mergeEntries,
+      cacheEntry: (entry: unknown) => { cached.push(entry); return cacheAvailable; },
+      fetch: async () => {
+        if (status === null) throw new TypeError('Offline');
+        return new Response(null, { status });
+      },
     };
     for (const name of ['setStatus', 'setSaving', 'setEntries', 'setQuery', 'setSongs', 'setSearchStatus', 'setSelected', 'setLyrics', 'setDetails', 'setGeniusUrl', 'setGeniusStatus', 'setGeniusLoading']) {
       calls[name] = [];
@@ -100,15 +134,17 @@ void test('save keeps a rejected draft and distinguishes validation from connect
     }
     await runInNewContext(`${stripTypeScriptTypes(save)}; save();`, { ...state, crypto });
     assert.equal(calls.setSaving.at(-1), false);
-    if (status === 400 || status === 409) {
+    const rejected = status === 400 || status === 409;
+    assert.equal(cached.length, rejected ? 0 : 1);
+    if (rejected || (status !== 201 && !cacheAvailable)) {
       assert.equal(calls.setEntries.length, 0);
       assert.equal(calls.setLyrics.length, 0);
       assert.equal(calls.setSelected.length, 0);
-      assert.match(String(calls.setStatus.at(-1)), status === 400 ? /保存条件/ : /すでに保存されています/);
+      assert.match(String(calls.setStatus.at(-1)), status === 400 ? /保存条件/ : status === 409 ? /すでに保存されています/ : /入力を残したまま/);
     } else {
       assert.equal(calls.setEntries.length, 1);
       assert.deepEqual(calls.setLyrics, ['']);
-      assert.match(String(calls.setStatus.at(-1)), status === 201 ? /語を保存しました/ : /一時保存/);
+      assert.match(String(calls.setStatus.at(-1)), status === 201 ? /語を保存しました/ : /このブラウザにのみ保存/);
     }
   }
 });

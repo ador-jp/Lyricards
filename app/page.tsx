@@ -5,12 +5,20 @@ import { Download, ExternalLink, LoaderCircle, Music2, Search, Sparkles } from '
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import type { Entry } from '@/lib/entry';
+import { mergeEntries, readCachedEntries, writeCachedEntries } from '@/lib/entry-cache';
 import { extractWords, type Word } from '@/lib/vocabulary';
 
 type Song = { trackId: number; trackName: string; artistName: string; artworkUrl100: string; trackViewUrl: string };
-type Entry = { id: string; song: string; artist: string; words: Word[]; createdAt: string };
-const STORAGE_KEY = 'lyricards.entries';
 
+function cacheEntry(entry: Entry) {
+  try {
+    writeCachedEntries(localStorage, mergeEntries([entry], readCachedEntries(localStorage)));
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export default function Home() {
   const [query, setQuery] = useState('');
@@ -18,7 +26,6 @@ export default function Home() {
   const [selected, setSelected] = useState<Song | null>(null);
   const [lyrics, setLyrics] = useState('');
   const [entries, setEntries] = useState<Entry[]>([]);
-  const [entriesReady, setEntriesReady] = useState(false);
   const [status, setStatus] = useState('');
   const [searchStatus, setSearchStatus] = useState('');
   const [searching, setSearching] = useState(false);
@@ -35,21 +42,28 @@ export default function Home() {
   const words = useMemo(() => baseWords.map(item => ({ ...item, ...details[item.word], example: details[item.word]?.example || item.example })), [baseWords, details]);
 
   useEffect(() => {
-    fetch('/api/entries').then(async response => {
+    const controller = new AbortController();
+    fetch('/api/entries', { signal: controller.signal }).then(async response => {
       if (!response.ok) throw new Error();
       const data = await response.json() as { entries: Entry[] };
-      setEntries(data.entries);
+      if (!Array.isArray(data.entries)) throw new Error();
+      if (controller.signal.aborted) return;
+      let loaded = data.entries;
+      try {
+        loaded = mergeEntries(loaded, readCachedEntries(localStorage));
+        writeCachedEntries(localStorage, loaded);
+      } catch { /* Local storage is optional for server saves. */ }
+      setEntries(current => mergeEntries(loaded, current));
     }).catch(() => {
-      try { setEntries(JSON.parse(localStorage.getItem(STORAGE_KEY) || localStorage.getItem('lylicards.entries') || localStorage.getItem('lyricbook.entries') || '[]')); } catch { /* empty */ }
-      setStatus('保存データを読み込めませんでした。新しい保存は再試行できます。');
-    }).finally(() => setEntriesReady(true));
+      if (controller.signal.aborted) return;
+      try {
+        const cached = readCachedEntries(localStorage);
+        setEntries(current => mergeEntries(current, cached));
+      } catch { /* Local storage is optional for server saves. */ }
+      setStatus(current => current || 'サーバーの保存データを読み込めませんでした。');
+    });
+    return () => controller.abort();
   }, []);
-
-  useEffect(() => {
-    if (!entriesReady) return;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(entries)); } catch { /* Local storage is optional. */ }
-  }, [entries, entriesReady]);
-
 
   useEffect(() => {
     const context = (document as Document & { modelContext?: { registerTool: (tool: object, options: { signal: AbortSignal }) => void } }).modelContext;
@@ -68,7 +82,8 @@ export default function Home() {
         const entry = { id: crypto.randomUUID(), song: value.song, artist: value.artist, words: extracted, createdAt: new Date().toISOString() };
         const response = await fetch('/api/entries', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(entry) });
         if (!response.ok) throw new Error('保存できませんでした');
-        setEntries(current => [entry, ...current]);
+        cacheEntry(entry);
+        setEntries(current => mergeEntries([entry], current));
         return { saved: extracted.length, song: value.song };
       },
     }, { signal: lifecycle.signal });
@@ -116,16 +131,22 @@ export default function Home() {
       }
       savedRemotely = response.ok;
     } catch {
-      // Keep the entry in this browser when the server is unavailable.
+      // Fall back to browser storage when the server is unavailable.
     }
-    setEntries(current => [entry, ...current]);
+    const savedLocally = cacheEntry(entry);
+    if (!savedRemotely && !savedLocally) {
+      setStatus('サーバーにもこのブラウザにも保存できませんでした。入力を残したまま再試行できます。');
+      setSaving(false);
+      return;
+    }
+    setEntries(current => mergeEntries([entry], current));
     setQuery(''); setSongs([]); setSearchStatus('');
     geniusRequest.current += 1;
     setSelected(null); setLyrics(''); setDetails({});
     setGeniusUrl(''); setGeniusStatus(''); setGeniusLoading(false);
     setStatus(savedRemotely
       ? `${savedWordCount}語を保存しました。続けて次の曲を検索できます。`
-      : '通信できなかったため、この端末に一時保存しました。続けて次の曲を検索できます。');
+      : 'サーバーに保存できなかったため、このブラウザにのみ保存しました。');
     setSaving(false);
   }
 
