@@ -16,7 +16,7 @@ const traced = Sentry.withSentry(
           ensureFetchPatch();
           const originalFetch = globalThis.fetch;
           globalThis.fetch = (input, init) => {
-            if (!Sentry.getActiveSpan()) return originalFetch(input, init);
+            if (!Sentry.getActiveSpan()?.isRecording()) return originalFetch(input, init);
             const url = input instanceof Request ? input.url : String(input);
             const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
             return Sentry.startSpan({ name: `${method} ${new URL(url).origin}${new URL(url).pathname}`, op: 'http.client' }, async span => {

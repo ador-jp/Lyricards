@@ -61,7 +61,7 @@ void test('worker preserves bypass responses and instruments vinext fetch succes
   assert.equal(setup, true);
   assert.equal(spans[0].name, 'HEAD /api/entries');
   assert.equal(spans[0].op, 'http.server');
-  active = {};
+  active = { isRecording: () => true };
   for (const host of ['api.tatoeba.org', 'api.datamuse.com', 'genius.com', 'itunes.apple.com', 'api.deezer.com']) {
     assert.equal(await scope.fetch(`https://${host}/search?q=private`), response);
     assert.equal(spans.at(-1)?.name, `GET https://${host}/search`);
@@ -72,6 +72,10 @@ void test('worker preserves bypass responses and instruments vinext fetch succes
   active = undefined;
   const count = spans.length;
   assert.equal(await scope.fetch('https://example.test/untraced'), response);
+  assert.equal(spans.length, count);
+  active = { isRecording: () => false };
+  assert.equal(await scope.fetch('https://example.test/unsampled'), response);
+  await assert.rejects(scope.fetch('https://example.test/failure'), error => error === failure);
   assert.equal(spans.length, count);
 });
 
