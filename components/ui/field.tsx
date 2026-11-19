@@ -76,6 +76,7 @@ function Field({
 }: React.ComponentProps<'div'> & VariantProps<typeof fieldVariants>) {
   return (
     <div
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- One field groups its own label and control, not multiple form fields.
       role="group"
       data-slot="field"
       data-orientation={orientation}

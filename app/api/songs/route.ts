@@ -53,7 +53,10 @@ async function searchDeezer(query: string): Promise<Song[] | null> {
     const data = await response.json() as { data?: DeezerTrack[] };
     if (!Array.isArray(data.data)) return null;
     return data.data
-      .filter((track): track is Required<Pick<DeezerTrack, 'id' | 'title' | 'link'>> & {
+      .filter((track): track is {
+        id: number;
+        title: string;
+        link: string;
         artist: { name: string };
         album: { cover_medium: string };
       } =>
