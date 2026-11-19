@@ -36,6 +36,11 @@ export async function POST(request: Request) {
   if (!isValidEntry(value)) return response({ error: '保存する単語帳が不正です。' }, owner, 400);
   const db = (env as unknown as { DB?: D1Database }).DB;
   if (!db) return response({ error: '保存機能の準備中です。' }, owner, 503);
-  await db.prepare('INSERT INTO entries (id, owner_id, song, artist, words_json, created_at) VALUES (?, ?, ?, ?, ?, ?)').bind(value.id, owner, value.song, value.artist, JSON.stringify(value.words), value.createdAt).run();
+  try {
+    const result = await db.prepare('INSERT INTO entries (id, owner_id, song, artist, words_json, created_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING').bind(value.id, owner, value.song, value.artist, JSON.stringify(value.words), value.createdAt).run();
+    if (result.meta.changes === 0) return response({ error: 'この単語帳はすでに保存されています。' }, owner, 409);
+  } catch {
+    return response({ error: '単語帳を保存できませんでした。再試行してください。' }, owner, 500);
+  }
   return response({ saved: true }, owner, 201);
 }
