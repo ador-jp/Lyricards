@@ -95,7 +95,7 @@ void test('sampling and environment have safe defaults and accept runtime overri
   }
 });
 
-void test('both event hooks remove request cookies and credential headers case-insensitively', () => {
+void test('both event hooks remove all request headers, cookies, IP addresses and query strings', () => {
   const options = sentryOptions({});
   for (const hook of [options.beforeSend, options.beforeSendTransaction]) {
     const event = { request: { cookies: { owner: 'private-owner' }, headers: {
@@ -103,13 +103,23 @@ void test('both event hooks remove request cookies and credential headers case-i
       'X-Lyricards-Entry-Owner': 'private-owner', accept: 'application/json',
     } } };
     assert.equal(hook(event), event);
-    assert.deepEqual(event.request, { headers: { accept: 'application/json' } });
+    assert.deepEqual(event.request, {});
     assert.deepEqual(hook({}), {});
     assert.deepEqual(hook({ request: {} }), { request: {} });
     const data = { 'http.request.header.cookie.lyricards_owner': 'private-owner',
-      'http.request.header.authorization': 'private-token', 'http.request.header.x_lyricards_entry_owner': 'private-owner', safe: true };
+      'http.request.header.authorization': 'private-token', 'http.request.header.x_lyricards_entry_owner': 'private-owner',
+      'http.request.header.accept': 'application/json', 'client.address': '192.0.2.1', 'user_agent.original': 'private-agent',
+      'http.query': 'private-query', 'url.query': 'private-query', 'url.full': 'https://example.test/api/songs?q=private-query', safe: true };
     const traced = hook({ contexts: { trace: { trace_id: 'trace', span_id: 'span', data: { ...data } } }, spans: [{ trace_id: 'trace', span_id: 'span', start_timestamp: 1, data: { ...data } }] });
-    assert.deepEqual(traced.contexts.trace.data, { safe: true });
-    assert.deepEqual(traced.spans[0].data, { safe: true });
+    assert.deepEqual(traced.contexts.trace.data, { 'url.full': 'https://example.test/api/songs', safe: true });
+    assert.deepEqual(traced.spans[0].data, { 'url.full': 'https://example.test/api/songs', safe: true });
+    const request = hook({ request: { url: 'https://example.test/api/songs?q=private-query#fragment', query_string: 'q=private-query', env: { REMOTE_ADDR: '192.0.2.1' } },
+      user: { id: 'user', ip_address: '192.0.2.1' },
+      spans: [{ trace_id: 'trace', span_id: 'span', start_timestamp: 1, op: 'http.client', description: 'GET https://example.test/search?q=private-query', data: {} }],
+      breadcrumbs: [{ data: { url: 'https://example.test/search?q=private-query' } }] });
+    assert.deepEqual(request.request, { url: 'https://example.test/api/songs' });
+    assert.deepEqual(request.user, { id: 'user' });
+    assert.equal(request.spans[0].description, 'GET https://example.test/search');
+    assert.equal(request.breadcrumbs[0].data.url, 'https://example.test/search');
   }
 });

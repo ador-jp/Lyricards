@@ -27,18 +27,27 @@ export function sentryOptions(env: SentryEnv) {
 export function stripRequestCredentials<T extends Event>(event: T): T {
   if (event.request) {
     delete event.request.cookies;
-    for (const name of Object.keys(event.request.headers ?? {})) {
-      if (['cookie', 'authorization', 'x-lyricards-entry-owner'].includes(name.toLowerCase())) {
-        delete event.request.headers![name];
-      }
-    }
+    delete event.request.headers;
+    delete event.request.query_string;
+    delete event.request.env;
+    if (event.request.url) event.request.url = withoutQuery(event.request.url);
   }
-  for (const data of [event.contexts?.trace?.data, ...(event.spans ?? []).map(span => span.data)]) {
+  if (event.user) delete event.user.ip_address;
+  for (const span of event.spans ?? []) {
+    if (span.op === 'http.client' && span.description) span.description = withoutQuery(span.description);
+  }
+  for (const data of [event.contexts?.trace?.data, ...(event.spans ?? []).map(span => span.data), ...(event.breadcrumbs ?? []).map(crumb => crumb.data)]) {
     for (const name of Object.keys(data ?? {})) {
-      if (/^http\.request\.header\.(cookie|set_cookie|authorization|x_lyricards_entry_owner)(\.|$)/i.test(name)) {
+      if (/^(http\.(request|response)\.header\.|http\.query$|url\.query$|client\.address$|network\.peer\.address$|http\.client_ip$|user\.ip_address$|user_agent\.original$)/i.test(name)) {
         delete data![name];
+      } else if (typeof data![name] === 'string' && /(^url($|\.)|url$|uri$|http\.target$)/i.test(name)) {
+        data![name] = withoutQuery(data![name] as string);
       }
     }
   }
   return event;
+}
+
+function withoutQuery(value: string): string {
+  return value.split(/[?#]/, 1)[0];
 }

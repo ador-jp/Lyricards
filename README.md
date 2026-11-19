@@ -48,6 +48,8 @@ The custom `worker.ts` entry wraps vinext with `@sentry/cloudflare`. Only
 `/api/*` requests are instrumented, named by method and pathname without query
 parameters. Outgoing fetches have `http.client` child spans; Sentry flushes via
 the execution context's `waitUntil`, without delaying responses.
+Both errors and transactions omit request headers, cookies, user IP addresses,
+and request/upstream URL query strings.
 
 `.openai/hosting.json` identifies the hosted project and its D1/R2 bindings;
 it does not contain Sentry credentials. Set the bindings in the hosting
