@@ -1,4 +1,4 @@
-import { dailyFallback, selectExample, selectMeanings } from '@/lib/vocabulary';
+import { dailyFallback, parseDictionaryPayload, parseSentencePayload, selectExample, selectMeanings } from '@/lib/vocabulary';
 
 function delay(ms: number) {
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -26,16 +26,17 @@ export async function GET(request: Request) {
     getJson(`https://api.datamuse.com/words?sp=${encodeURIComponent(word)}&qe=sp&md=dp&max=1`),
     getJson(`https://api.tatoeba.org/v1/sentences?lang=eng&q=${encodeURIComponent(word)}&is_unapproved=no&is_orphan=no&word_count=4-12&sort=relevance&limit=10`),
   ]);
-  if (!dictionaryResult.available) {
+  const entries = parseDictionaryPayload(dictionaryResult.data);
+  if (!dictionaryResult.available || entries === null) {
     return Response.json({ error: 'Dictionary service unavailable' }, { status: 502 });
   }
 
-  const [entry] = (dictionaryResult.data ?? []) as Array<{ word?: string; defs?: string[]; tags?: string[] }>;
+  const [entry] = entries;
   const selected = selectMeanings(entry?.word?.toLowerCase() === word ? entry.defs ?? [] : []);
   const parts: Record<string, string> = { n: 'noun', v: 'verb', adj: 'adjective', adv: 'adverb', u: 'other' };
   const fallback = entry?.tags?.find(tag => parts[tag]);
   const partOfSpeech = parts[selected.partOfSpeech] ?? (fallback ? parts[fallback] : '');
-  const sentences = (sentenceResult.data as { data?: Array<{ id: number; text: string; owner?: string }> } | null)?.data ?? [];
+  const sentences = parseSentencePayload(sentenceResult.data);
   const example = selectExample(word, sentences);
 
   return Response.json({
