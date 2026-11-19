@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import { createServer } from 'node:http';
 import test, { type TestContext } from 'node:test';
 import { GET as lookupDictionary } from '../app/api/dictionary/route.ts';
 import { GET as lookupGenius } from '../app/api/genius/route.ts';
@@ -42,16 +44,34 @@ void test('song search falls back when Deezer times out before headers', async t
   verifyRequests(['api.deezer.com', 'itunes.apple.com']);
 });
 
-void test('Genius keeps its not-found response when the upstream body times out', async t => {
-  const verifyRequests = mockUpstream(t, (_host, expire) => new Response(new ReadableStream({
-    pull() {
-      expire();
-    },
-  })));
+void test('Genius keeps its not-found response when the upstream body times out', { timeout: 15_000 }, async t => {
+  const upstream = createServer((_request, response) => {
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.write('{');
+  });
+  upstream.listen(0, '127.0.0.1');
+  await once(upstream, 'listening');
+  t.after(() => {
+    upstream.close();
+    upstream.closeAllConnections();
+  });
+  const address = upstream.address();
+  assert.ok(address && typeof address !== 'string');
+
+  const fetch = globalThis.fetch;
+  let upstreamStatus: number | undefined;
+  const redirectedFetch = t.mock.method(globalThis, 'fetch', async (_url: string, init?: RequestInit) => {
+    const response = await fetch(`http://127.0.0.1:${address.port}`, init);
+    upstreamStatus = response.status;
+    return response;
+  });
   const response = await lookupGenius(new Request('https://example.test/api/genius?song=dream'));
+  assert.equal(upstreamStatus, 200, 'fetch received headers before the body timed out');
+  const signal = redirectedFetch.mock.calls[0]?.arguments[1]?.signal;
+  assert.ok(signal?.aborted && signal.reason instanceof DOMException);
+  assert.equal(signal.reason.name, 'TimeoutError');
   assert.equal(response.status, 404);
   assert.deepEqual(await response.json(), { error: 'No Genius lyrics page was found.' });
-  verifyRequests(['genius.com']);
 });
 
 void test('dictionary retries a timed-out sentence request, then uses a local example', async t => {
