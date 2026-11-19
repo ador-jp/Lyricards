@@ -7,13 +7,16 @@ import { dailyFallback } from './vocabulary.ts';
 
 function mockUpstream(t: TestContext, respond: (host: string, expire: () => never) => Response) {
   const deadlines = new Map<AbortSignal, AbortController>();
+  const hosts: string[] = [];
   const timeout = t.mock.method(AbortSignal, 'timeout', (_delay: number) => {
     const controller = new AbortController();
     deadlines.set(controller.signal, controller);
     return controller.signal;
   });
   const fetch = t.mock.method(globalThis, 'fetch', async (url: string, init?: RequestInit) => {
-    return respond(new URL(url).hostname, () => {
+    const { hostname } = new URL(url);
+    hosts.push(hostname);
+    return respond(hostname, () => {
       const controller = init?.signal && deadlines.get(init.signal);
       const reason = new DOMException('Upstream deadline exceeded', 'TimeoutError');
       controller?.abort(reason);
@@ -21,7 +24,7 @@ function mockUpstream(t: TestContext, respond: (host: string, expire: () => neve
     });
   });
   return (expectedHosts: string[]) => {
-    assert.deepEqual(fetch.mock.calls.map(call => new URL(String(call.arguments[0])).hostname), expectedHosts);
+    assert.deepEqual(hosts, expectedHosts);
     assert.deepEqual(timeout.mock.calls.map(call => call.arguments[0]), expectedHosts.map(() => 5_000));
     const requestSignals = fetch.mock.calls.map(call => call.arguments[1]?.signal);
     assert.deepEqual(requestSignals, [...deadlines.keys()]);
