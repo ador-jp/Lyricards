@@ -1,11 +1,16 @@
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { join } from 'node:path';
 import { sites } from '@openai/sites-vite-plugin';
 import tailwindcss from '@tailwindcss/postcss';
 import vinext from 'vinext';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import hostingConfig from './.openai/hosting.json';
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   '00000000-0000-4000-8000-000000000000';
+const LOCAL_STATE_PATH = '.wrangler/state';
 
 const { d1, r2 } = hostingConfig;
 
@@ -34,6 +39,57 @@ const localBindingConfig = {
     : [],
 };
 
+function localD1Migrations(): Plugin {
+  return {
+    name: 'lyricards:local-d1-migrations',
+    apply: 'serve',
+    configureServer: {
+      order: 'pre',
+      handler(server) {
+        if (!d1) return;
+
+        const { root } = server.config;
+        const wranglerDir = join(root, '.wrangler');
+        const configPath = join(wranglerDir, 'lyricards-local-d1.json');
+        mkdirSync(wranglerDir, { recursive: true });
+        writeFileSync(
+          configPath,
+          JSON.stringify({
+            d1_databases: localBindingConfig.d1_databases.map((database) => ({
+              ...database,
+              migrations_dir: '../drizzle',
+            })),
+          }),
+        );
+
+        const wrangler = createRequire(import.meta.url).resolve(
+          'wrangler/bin/wrangler.js',
+        );
+        execFileSync(
+          process.execPath,
+          [
+            wrangler,
+            'd1',
+            'migrations',
+            'apply',
+            d1,
+            '--local',
+            '--config',
+            configPath,
+            '--persist-to',
+            join(root, LOCAL_STATE_PATH),
+          ],
+          {
+            cwd: root,
+            env: { ...process.env, WRANGLER_SEND_METRICS: 'false' },
+            stdio: ['ignore', 'inherit', 'inherit'],
+          },
+        );
+      },
+    },
+  };
+}
+
 export default defineConfig(async () => {
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
@@ -52,9 +108,11 @@ export default defineConfig(async () => {
     plugins: [
       vinext(),
       sites(),
+      localD1Migrations(),
       cloudflare({
         viteEnvironment: { name: 'rsc', childEnvironments: ['ssr'] },
         config: localBindingConfig,
+        persistState: { path: LOCAL_STATE_PATH },
       }),
     ],
   };
