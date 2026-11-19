@@ -1,46 +1,56 @@
 import { env } from 'cloudflare:workers';
 import { isValidEntry } from '@/lib/entry';
+import { ENTRY_OWNER_HEADER, entryOwnerCookie, readEntryOwner } from '@/lib/entry-owner';
 
 type StoredEntry = { id: string; song: string; artist: string; words: unknown[]; createdAt: string };
-const COOKIE = 'lyricards_owner';
 
-function ownerId(request: Request) {
-  const value = request.headers.get('Cookie')?.match(new RegExp(`${COOKIE}=([^;]+)`))?.[1];
-  return value || crypto.randomUUID();
+function response(body: unknown, status = 200, newOwner?: string) {
+  const headers = new Headers({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'private, no-store' });
+  if (newOwner) headers.set('set-cookie', entryOwnerCookie(newOwner));
+  return new Response(JSON.stringify(body), { status, headers });
 }
 
-function response(body: unknown, owner: string, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json; charset=utf-8', 'set-cookie': `${COOKIE}=${owner}; Path=/; Max-Age=31536000; SameSite=Lax; Secure` },
-  });
+function ownerContext(request: Request) {
+  const existing = readEntryOwner(request.headers.get('Cookie'));
+  const expected = request.headers.get(ENTRY_OWNER_HEADER);
+  if (expected !== null && expected !== existing) return null;
+  const owner = existing ?? crypto.randomUUID();
+  return { owner, reply: (body: unknown, status?: number) => response(body, status, existing ? undefined : owner) };
+}
+
+function ownerChanged() {
+  return response({ error: 'ブラウザの保存先が変わりました。再試行してください。' }, 412);
 }
 
 export async function GET(request: Request) {
-  const owner = ownerId(request);
+  const context = ownerContext(request);
+  if (!context) return ownerChanged();
+  const { owner, reply } = context;
   const db = (env as unknown as { DB?: D1Database }).DB;
-  if (!db) return response({ error: '保存機能の準備中です。' }, owner, 503);
+  if (!db) return reply({ error: '保存機能の準備中です。' }, 503);
   const rows = await db.prepare('SELECT id, song, artist, words_json, created_at FROM entries WHERE owner_id = ? ORDER BY created_at DESC').bind(owner).all<{ id: string; song: string; artist: string; words_json: string; created_at: string }>();
   const entries: StoredEntry[] = rows.results.map(row => ({ id: row.id, song: row.song, artist: row.artist, words: JSON.parse(row.words_json), createdAt: row.created_at }));
-  return response({ entries }, owner);
+  return reply({ entries });
 }
 
 export async function POST(request: Request) {
-  const owner = ownerId(request);
+  const context = ownerContext(request);
+  if (!context) return ownerChanged();
+  const { owner, reply } = context;
   let value: unknown;
   try {
     value = await request.json();
   } catch {
-    return response({ error: '保存する単語帳が不正です。' }, owner, 400);
+    return reply({ error: '保存する単語帳が不正です。' }, 400);
   }
-  if (!isValidEntry(value)) return response({ error: '保存する単語帳が不正です。' }, owner, 400);
+  if (!isValidEntry(value)) return reply({ error: '保存する単語帳が不正です。' }, 400);
   const db = (env as unknown as { DB?: D1Database }).DB;
-  if (!db) return response({ error: '保存機能の準備中です。' }, owner, 503);
+  if (!db) return reply({ error: '保存機能の準備中です。' }, 503);
   try {
     const result = await db.prepare('INSERT INTO entries (id, owner_id, song, artist, words_json, created_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING').bind(value.id, owner, value.song, value.artist, JSON.stringify(value.words), value.createdAt).run();
-    if (result.meta.changes === 0) return response({ error: 'この単語帳はすでに保存されています。' }, owner, 409);
+    if (result.meta.changes === 0) return reply({ error: 'この単語帳はすでに保存されています。' }, 409);
   } catch {
-    return response({ error: '単語帳を保存できませんでした。再試行してください。' }, owner, 500);
+    return reply({ error: '単語帳を保存できませんでした。再試行してください。' }, 500);
   }
-  return response({ saved: true }, owner, 201);
+  return reply({ saved: true }, 201);
 }

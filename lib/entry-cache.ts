@@ -1,7 +1,12 @@
 import { isValidEntry, type Entry } from './entry.ts';
 
-const STORAGE_KEY = 'lyricards.entries';
-const LEGACY_STORAGE_KEYS = ['lylicards.entries', 'lyricbook.entries'];
+function pendingPrefix(owner: string) {
+  return `lyricards.pending:${encodeURIComponent(owner)}:`;
+}
+
+function pendingKey(owner: string, id: string) {
+  return pendingPrefix(owner) + id;
+}
 
 export function mergeEntries(...lists: Entry[][]): Entry[] {
   const byId = new Map<string, Entry>();
@@ -13,20 +18,47 @@ export function mergeEntries(...lists: Entry[][]): Entry[] {
   return [...byId.values()].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 }
 
-export function readCachedEntries(storage: Pick<Storage, 'getItem'>): Entry[] {
-  for (const key of [STORAGE_KEY, ...LEGACY_STORAGE_KEYS]) {
-    const raw = storage.getItem(key);
-    if (raw === null) continue;
+export function readPendingEntries(storage: Pick<Storage, 'length' | 'key' | 'getItem'>, owner: string): Entry[] {
+  const entries: Entry[] = [];
+  const prefix = pendingPrefix(owner);
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (!key?.startsWith(prefix)) continue;
+    const value = storage.getItem(key);
+    if (!value) continue;
     try {
-      const entries: unknown = JSON.parse(raw);
-      if (Array.isArray(entries)) return entries.filter(entry => isValidEntry(entry, { enforceLimits: false }));
+      const entry: unknown = JSON.parse(value);
+      if (isValidEntry(entry) && key === pendingKey(owner, entry.id)) entries.push(entry);
     } catch {
-      // Try the legacy cache if the current one is unreadable.
+      // Ignore corrupt records without blocking other pending saves.
     }
   }
-  return [];
+  return entries;
 }
 
-export function writeCachedEntries(storage: Pick<Storage, 'setItem'>, entries: Entry[]) {
-  storage.setItem(STORAGE_KEY, JSON.stringify(entries));
+export function queueEntry(storage: Pick<Storage, 'setItem'>, owner: string, entry: Entry) {
+  storage.setItem(pendingKey(owner, entry.id), JSON.stringify(entry));
+}
+
+export async function syncPendingEntries(options: {
+  storage: Pick<Storage, 'removeItem'>;
+  owner: string;
+  pending: Entry[];
+  remote: Entry[];
+  upload: (entry: Entry) => Promise<Response>;
+  signal: AbortSignal;
+}) {
+  const { storage, owner, pending, remote, upload, signal } = options;
+  const savedIds = new Set(remote.map(entry => entry.id));
+  for (const entry of pending) {
+    if (signal.aborted) return;
+    try {
+      // A 409 alone does not establish that the entry belongs to this owner.
+      if (savedIds.has(entry.id) || (await upload(entry)).ok) {
+        storage.removeItem(pendingKey(owner, entry.id));
+      }
+    } catch {
+      // Keep the pending save for the next reconnect or reload.
+    }
+  }
 }
