@@ -26,7 +26,10 @@ npm install
 npm run dev
 ```
 
+`npm run dev` は起動時に `drizzle/` の未適用マイグレーションをローカル D1 に適用します。手動で SQL を実行する必要はありません。ローカルデータは `.wrangler/state` に保存され、再起動後も残ります。本番の D1 には接続しません。
+
 ```bash
+npm run lint
 npm test
 npm run build
 ```
