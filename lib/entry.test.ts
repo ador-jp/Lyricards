@@ -63,14 +63,14 @@ void test('reconnect uploads pending saves once and retries unconfirmed entries'
 void test('save response decisions distinguish permanent rejection from retryable failures', () => {
   for (let status = 200; status < 300; status++) assert.equal(saveResponseAction(status), 'saved');
   for (let status = 400; status < 500; status++) {
-    assert.equal(saveResponseAction(status), status === 408 || status === 429 ? 'retry' : 'reject');
+    assert.equal(saveResponseAction(status), status === 408 || status === 412 || status === 429 ? 'retry' : 'reject');
   }
   for (let status = 500; status < 600; status++) assert.equal(saveResponseAction(status), 'retry');
   assert.equal(saveResponseAction(302), 'retry');
 });
 
 void test('sync reports and removes permanent rejections without retrying them or claiming ownership', async () => {
-  for (const status of [400, 401, 403, 404, 409, 412, 422]) {
+  for (const status of [400, 401, 403, 404, 409, 422]) {
     const storage = makeStorage();
     queueEntry(storage, 'owner', valid);
     const rejected: unknown[] = [];
@@ -106,6 +106,25 @@ void test('sync retains transient failures and does not mutate an aborted upload
     });
     assert.deepEqual(readPendingEntries(storage, 'owner'), [valid]);
   }
+});
+
+void test('owner mismatch preserves the pending save until its owner can retry', async () => {
+  const storage = makeStorage();
+  queueEntry(storage, 'owner-1', valid);
+  const rejected: unknown[] = [];
+  const run = (status: number) => syncPendingEntries({
+    storage, owner: 'owner-1', pending: readPendingEntries(storage, 'owner-1'), remote: [],
+    signal: new AbortController().signal,
+    upload: async () => new Response(null, { status }),
+    onRejected: entry => rejected.push(entry),
+  });
+  await run(412);
+  assert.deepEqual(readPendingEntries(storage, 'owner-1'), [valid]);
+  assert.deepEqual(readPendingEntries(storage, 'owner-2'), []);
+  assert.deepEqual(rejected, []);
+  await run(201);
+  assert.deepEqual(readPendingEntries(storage, 'owner-1'), []);
+  assert.deepEqual(rejected, []);
 });
 
 void test('offline history restores confirmed saves for that owner without adding them to the upload queue', () => {

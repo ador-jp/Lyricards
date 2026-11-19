@@ -61,7 +61,7 @@ export function rememberServerEntries(storage: Pick<Storage, 'getItem' | 'setIte
 
 export function saveResponseAction(status: number): 'saved' | 'reject' | 'retry' {
   if (status >= 200 && status < 300) return 'saved';
-  if (status >= 400 && status < 500 && status !== 408 && status !== 429) return 'reject';
+  if (status >= 400 && status < 500 && status !== 408 && status !== 412 && status !== 429) return 'reject';
   return 'retry';
 }
 
