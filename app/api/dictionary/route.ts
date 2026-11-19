@@ -1,4 +1,5 @@
-import { dailyFallback, parseDictionaryPayload, parseSentencePayload, selectExample, selectMeanings } from '@/lib/vocabulary';
+import { fetchUpstream } from '../../../lib/upstream.ts';
+import { dailyFallback, parseDictionaryPayload, parseSentencePayload, selectExample, selectMeanings } from '../../../lib/vocabulary.ts';
 
 function delay(ms: number) {
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -13,7 +14,7 @@ export async function GET(request: Request) {
   const getJson = async (url: string) => {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const response = await fetch(url);
+        const response = await fetchUpstream(url);
         if (response.ok) return { available: true, data: await response.json() };
       } catch {
         // Retry transient upstream and JSON parsing failures once.
