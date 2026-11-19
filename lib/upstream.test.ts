@@ -21,7 +21,7 @@ function mockUpstream(t: TestContext, respond: (host: string, expire: () => neve
     });
   });
   return (expectedHosts: string[]) => {
-    assert.deepEqual(fetch.mock.calls.map(call => new URL(call.arguments[0]).hostname), expectedHosts);
+    assert.deepEqual(fetch.mock.calls.map(call => new URL(String(call.arguments[0])).hostname), expectedHosts);
     assert.deepEqual(timeout.mock.calls.map(call => call.arguments[0]), expectedHosts.map(() => 5_000));
     const requestSignals = fetch.mock.calls.map(call => call.arguments[1]?.signal);
     assert.deepEqual(requestSignals, [...deadlines.keys()]);

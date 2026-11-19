@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import { GET } from '../app/api/dictionary/route.ts';
-import { dailyFallback, parseDictionaryPayload, parseSentencePayload, selectExample, selectMeanings } from './vocabulary.ts';
+import { dailyFallback, parseDictionaryPayload, parseSentencePayload } from './vocabulary.ts';
 
 const dictionary = [{ word: 'dream', defs: ['n\tA hope.'], tags: ['n'] }];
 const sentences = { data: [{ id: 1, text: 'I have a dream.', owner: 'author' }] };
