@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { isValidEntry, type Entry } from '@/lib/entry';
-import { mergeEntries, queueEntry, readPendingEntries, readServerHistory, rememberServerEntries, syncPendingEntries } from '@/lib/entry-cache';
+import { discardRejectedEntries, mergeEntries, queueEntry, readPendingEntries, readRejectedEntries, readServerHistory, rememberServerEntries, syncPendingEntries } from '@/lib/entry-cache';
 import { ENTRY_OWNER_HEADER, entryOwnerCookie, readEntryOwner } from '@/lib/entry-owner';
 import { extractWords, type Word } from '@/lib/vocabulary';
 
@@ -15,6 +15,7 @@ type Song = { trackId: number; trackName: string; artistName: string; artworkUrl
 const ownerChangedMessage = 'ブラウザの保存先が変わりました。入力を残したまま再試行できます。';
 const invalidEntryMessage = '単語帳の内容やサイズが保存条件を満たしていません。歌詞を短くするなど、内容を確認して再試行してください。';
 const pendingSaveMessage = 'このブラウザに一時保存しました。接続が戻るとサーバーへの保存を再試行します。';
+const rejectedSaveMessage = '保存を拒否された単語帳は「未保存（拒否）」としてこのブラウザに残しています。自動再試行はしません。CSVに書き出して内容を確認できます。';
 
 function ensureEntryOwner() {
   const existing = readEntryOwner(document.cookie);
@@ -34,7 +35,7 @@ function pendingEntries(owner: string) {
 function offlineHistory(owner: string) {
   const pending = pendingEntries(owner);
   try {
-    return mergeEntries(readServerHistory(localStorage, owner), pending);
+    return mergeEntries(readServerHistory(localStorage, owner), pending, readRejectedEntries(localStorage, owner));
   } catch {
     return mergeEntries(pending);
   }
@@ -67,8 +68,10 @@ export default function Home() {
   const [songs, setSongs] = useState<Song[]>([]);
   const [selected, setSelected] = useState<Song | null>(null);
   const [lyrics, setLyrics] = useState('');
-  const [{ entries }, setHistory] = useState<{ owner: string | null; entries: Entry[] }>({ owner: null, entries: [] });
+  const [{ owner: historyOwner, entries }, setHistory] = useState<{ owner: string | null; entries: Entry[] }>({ owner: null, entries: [] });
+  const [rejected, setRejected] = useState<Entry[]>([]);
   const [status, setStatus] = useState('');
+  const [syncWarning, setSyncWarning] = useState('');
   const [searchStatus, setSearchStatus] = useState('');
   const [searching, setSearching] = useState(false);
   const [geniusUrl, setGeniusUrl] = useState('');
@@ -91,10 +94,15 @@ export default function Home() {
       const { signal } = active = new AbortController();
       const previousOwner = requestedOwner;
       const owner = requestedOwner = ensureEntryOwner();
-      if (previousOwner && previousOwner !== owner) setStatus('');
+      if (previousOwner && previousOwner !== owner) { setStatus(''); setSyncWarning(''); }
       const cached = owner ? offlineHistory(owner) : [];
       setHistory(current => current.owner === owner ? current : { owner, entries: cached });
       if (!owner) return;
+      try {
+        const localRejected = readRejectedEntries(localStorage, owner);
+        setRejected(localRejected);
+        if (localRejected.length && previousOwner !== owner) setSyncWarning(rejectedSaveMessage);
+      } catch { setRejected([]); }
       try {
         const response = await fetch('/api/entries', { headers: { [ENTRY_OWNER_HEADER]: owner }, signal });
         if (!response.ok) throw new Error();
@@ -109,6 +117,26 @@ export default function Home() {
         if (pending.length) {
           await syncPendingEntries({
             storage: localStorage, owner, pending, remote: data.entries, signal,
+            onRejected: entry => {
+              if (readEntryOwner(document.cookie) !== owner) return;
+              setSyncWarning(rejectedSaveMessage);
+              setRejected(current => mergeEntries(current, [entry]));
+              setStatus(current => current === pendingSaveMessage ? '' : current);
+            },
+            fetchRemote: async () => {
+              const response = await fetch('/api/entries', { headers: { [ENTRY_OWNER_HEADER]: owner }, signal });
+              if (!response.ok) throw new Error();
+              const data = await response.json() as { entries: Entry[] };
+              if (!Array.isArray(data.entries) || !data.entries.every(isValidEntry)
+                || signal.aborted || readEntryOwner(document.cookie) !== owner) throw new Error();
+              return data.entries;
+            },
+            onSaved: entry => {
+              if (readEntryOwner(document.cookie) !== owner) return;
+              setSyncWarning('');
+              setHistory(current => current.owner === owner
+                ? { owner, entries: mergeEntries([entry], current.entries) } : current);
+            },
             upload: async entry => {
               const result = await postEntry(entry, owner, signal);
               if (result.ok) cacheServerEntries(owner, [entry]);
@@ -161,6 +189,7 @@ export default function Home() {
         const response = await postEntry(entry, owner, lifecycle.signal);
         if (!response.ok || readEntryOwner(document.cookie) !== owner) throw new Error('保存できませんでした');
         cacheServerEntries(owner, [entry]);
+        setSyncWarning('');
         setHistory(current => ({ owner, entries: mergeEntries([entry], current.owner === owner ? current.entries : []) }));
         return { saved: extracted.length, song: value.song };
       },
@@ -229,7 +258,7 @@ export default function Home() {
       setSaving(false);
       return;
     }
-    if (savedRemotely) cacheServerEntries(owner, [entry]);
+    if (savedRemotely) { cacheServerEntries(owner, [entry]); setSyncWarning(''); }
     setHistory(current => ({ owner, entries: mergeEntries([entry], current.owner === owner ? current.entries : []) }));
     setQuery(''); setSongs([]); setSearchStatus('');
     geniusRequest.current += 1;
@@ -239,6 +268,18 @@ export default function Home() {
       ? `${savedWordCount}語を保存しました。続けて次の曲を検索できます。`
       : pendingSaveMessage);
     setSaving(false);
+  }
+
+  function discardRejected() {
+    if (!historyOwner || readEntryOwner(document.cookie) !== historyOwner) return;
+    try {
+      discardRejectedEntries(localStorage, historyOwner);
+      const rejectedIds = new Set(rejected.map(entry => entry.id));
+      setHistory(current => current.owner === historyOwner
+        ? { ...current, entries: current.entries.filter(entry => !rejectedIds.has(entry.id)) } : current);
+      setRejected([]);
+      setSyncWarning('');
+    } catch { setStatus('未保存の単語帳を破棄できませんでした。再試行してください。'); }
   }
 
   async function selectSong(song: Song) {
@@ -364,7 +405,8 @@ export default function Home() {
         <div className="mt-4 min-h-44 space-y-2 lg:max-h-[52vh] lg:overflow-y-auto lg:pr-1">{words.length ? words.map(({word, meaning, meanings, partOfSpeech, example, exampleAuthor, exampleUrl}) => <div className="word" key={word}><div className="flex items-baseline gap-2"><strong>{word}</strong>{partOfSpeech && <small>{partOfSpeech}</small>}</div><ol className="meaning">{(meanings ?? [meaning ?? '']).filter(Boolean).map((item, index) => <li key={item}>{index + 1}. {item}</li>)}</ol><p>例: {example || '日常例文が見つかりませんでした'}</p>{exampleUrl && <a className="source" href={exampleUrl} target="_blank" rel="noreferrer">Tatoeba / {exampleAuthor || 'contributor'} · CC BY 2.0 FR</a>}</div>) : <div className="empty"><Sparkles size={26}/><p>歌詞を入力すると<br/>未学習の全単語が並びます</p></div>}</div>
         <Button onClick={save} disabled={saving || loading} className="mt-5 h-11 w-full">{saving ? '保存中…' : '単語帳に保存'}</Button>
         {status && <output className="mt-3 block text-sm text-muted-foreground">{status}</output>}
-        <div className="mt-6 border-t pt-5"><div className="flex items-center justify-between"><span className="text-sm font-semibold">保存済み</span><span className="text-sm text-muted-foreground">{entries.reduce((n, e) => n + e.words.length, 0)}語</span></div>{entries.slice(0, 3).map(entry => <p key={entry.id} className="mt-2 truncate text-xs text-muted-foreground">✓ {entry.song} — {entry.artist}（{entry.words.length}語）</p>)}<Button variant="outline" onClick={downloadCsv} disabled={!entries.length && !words.length} className="mt-3 w-full gap-2"><Download size={16}/>CSVを書き出す</Button><p className="mt-2 text-xs leading-relaxed text-muted-foreground">未保存の解析結果もCSVに含めます。Google Sheetsでそのまま読み込めます。</p></div>
+        {syncWarning && <div role="alert" className="mt-3 text-sm text-red-700"><p>{syncWarning}</p><div className="mt-2 flex flex-wrap gap-2"><Button variant="outline" onClick={discardRejected}>拒否された単語帳を破棄</Button><Button variant="outline" onClick={() => setSyncWarning('')}>警告を閉じる</Button></div></div>}
+        <div className="mt-6 border-t pt-5"><div className="flex items-center justify-between"><span className="text-sm font-semibold">保存済み・未保存</span><span className="text-sm text-muted-foreground">{entries.reduce((n, e) => n + e.words.length, 0)}語</span></div>{entries.filter(entry => !rejected.some(item => item.id === entry.id)).slice(0, 3).map(entry => <p key={entry.id} className="mt-2 truncate text-xs text-muted-foreground">✓ {entry.song} — {entry.artist}（{entry.words.length}語）</p>)}{rejected.map(entry => <p key={entry.id} className="mt-2 text-xs text-destructive">未保存（拒否） {entry.song} — {entry.artist}（{entry.words.length}語）</p>)}{rejected.length > 0 && !syncWarning && <Button variant="outline" className="mt-2" onClick={discardRejected}>拒否された単語帳を破棄</Button>}<Button variant="outline" onClick={downloadCsv} disabled={!entries.length && !words.length} className="mt-3 w-full gap-2"><Download size={16}/>CSVを書き出す</Button><p className="mt-2 text-xs leading-relaxed text-muted-foreground">未保存・拒否された単語帳もCSVに含めます。Google Sheetsでそのまま読み込めます。</p></div>
       </aside>
     </div>
   </main>;

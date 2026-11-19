@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
-import { mergeEntries, queueEntry, readPendingEntries, readServerHistory, rememberServerEntries, syncPendingEntries } from './entry-cache.ts';
+import { discardRejectedEntries, mergeEntries, queueEntry, readPendingEntries, readRejectedEntries, readServerHistory, rememberServerEntries, saveResponseAction, syncPendingEntries } from './entry-cache.ts';
 import { ENTRY_OWNER_HEADER, readEntryOwner } from './entry-owner.ts';
 import { isValidEntry } from './entry.ts';
 
@@ -44,6 +44,7 @@ void test('reconnect uploads pending saves once and retries unconfirmed entries'
   const uploadAttempts: string[] = [];
   const run = (remote: typeof entries, statuses: Record<string, number>) => syncPendingEntries({
     storage, owner, pending: readPendingEntries(storage, owner), remote, signal: new AbortController().signal,
+    fetchRemote: async () => remote,
     upload: async ({ id }) => {
       uploadAttempts.push(id);
       if (!(id in statuses)) throw new TypeError('Offline');
@@ -52,12 +53,142 @@ void test('reconnect uploads pending saves once and retries unconfirmed entries'
   });
   await run([entries[0]], { offline: 201, error: 503, conflict: 409 });
   assert.deepEqual(uploadAttempts, ['offline', 'error', 'conflict', 'interrupted']);
-  assert.deepEqual(readPendingEntries(storage, owner), entries.slice(2));
+  assert.deepEqual(readPendingEntries(storage, owner), [entries[2], entries[4]]);
   assert.equal(readPendingEntries(storage, 'owner-2').length, 1);
 
   await run([entries[3]], { error: 201, interrupted: 201 });
   assert.deepEqual(uploadAttempts.slice(4), ['error', 'interrupted']);
   assert.deepEqual(readPendingEntries(storage, owner), []);
+});
+
+void test('save response decisions distinguish permanent rejection from retryable failures', () => {
+  for (let status = 200; status < 300; status++) assert.equal(saveResponseAction(status), 'saved');
+  for (let status = 400; status < 500; status++) {
+    assert.equal(saveResponseAction(status), status === 409 ? 'confirm' : status === 400 || status === 422 ? 'reject' : 'retry');
+  }
+  for (let status = 500; status < 600; status++) assert.equal(saveResponseAction(status), 'retry');
+  assert.equal(saveResponseAction(302), 'retry');
+});
+
+void test('sync reports and removes permanent rejections without retrying them or claiming ownership', async () => {
+  for (const status of [400, 409, 422]) {
+    const storage = makeStorage();
+    queueEntry(storage, 'owner', valid);
+    const rejected: unknown[] = [];
+    let attempts = 0;
+    const run = () => syncPendingEntries({
+      storage, owner: 'owner', pending: readPendingEntries(storage, 'owner'), remote: [],
+      signal: new AbortController().signal,
+      fetchRemote: async () => [],
+      upload: async () => { attempts++; return new Response(null, { status }); },
+      onRejected: entry => rejected.push(entry),
+    });
+    await run();
+    await run();
+    assert.equal(attempts, 1);
+    assert.deepEqual(rejected, [valid]);
+    assert.deepEqual(readPendingEntries(storage, 'owner'), []);
+    assert.deepEqual(readServerHistory(storage, 'owner'), []);
+    assert.deepEqual(readRejectedEntries(storage, 'owner'), [valid]);
+    assert.deepEqual(readRejectedEntries(storage, 'another-owner'), []);
+    discardRejectedEntries(storage, 'another-owner');
+    assert.deepEqual(readRejectedEntries(storage, 'owner'), [valid]);
+    discardRejectedEntries(storage, 'owner');
+    assert.deepEqual(readRejectedEntries(storage, 'owner'), []);
+  }
+});
+
+void test('sync retains transient failures and does not mutate an aborted upload', async () => {
+  for (const status of [401, 403, 404, 408, 429, 500, 503, null, 400]) {
+    const storage = makeStorage();
+    queueEntry(storage, 'owner', valid);
+    const controller = new AbortController();
+    await syncPendingEntries({
+      storage, owner: 'owner', pending: [valid], remote: [], signal: controller.signal,
+      upload: async () => {
+        if (status === null) throw new TypeError('Offline');
+        if (status === 400) controller.abort();
+        return new Response(null, { status });
+      },
+      onRejected: () => assert.fail('Must not report a rejection'),
+    });
+    assert.deepEqual(readPendingEntries(storage, 'owner'), [valid]);
+  }
+});
+
+void test('owner mismatch preserves the pending save until its owner can retry', async () => {
+  const storage = makeStorage();
+  queueEntry(storage, 'owner-1', valid);
+  const rejected: unknown[] = [];
+  const run = (status: number) => syncPendingEntries({
+    storage, owner: 'owner-1', pending: readPendingEntries(storage, 'owner-1'), remote: [],
+    signal: new AbortController().signal,
+    upload: async () => new Response(null, { status }),
+    onRejected: entry => rejected.push(entry),
+  });
+  await run(412);
+  assert.deepEqual(readPendingEntries(storage, 'owner-1'), [valid]);
+  assert.deepEqual(readPendingEntries(storage, 'owner-2'), []);
+  assert.deepEqual(rejected, []);
+  await run(201);
+  assert.deepEqual(readPendingEntries(storage, 'owner-1'), []);
+  assert.deepEqual(rejected, []);
+});
+
+void test('409 checks owner history and caches the server copy saved by another tab', async () => {
+  for (const outcome of ['saved', 'missing', 'failure', 'aborted'] as const) {
+    const storage = makeStorage();
+    queueEntry(storage, 'owner', valid);
+    const serverCopy = { ...valid, song: 'Server copy' };
+    const rejected: unknown[] = [];
+    const saved: unknown[] = [];
+    const controller = new AbortController();
+    await syncPendingEntries({
+      storage, owner: 'owner', pending: [valid], remote: [], signal: controller.signal,
+      upload: async () => new Response(null, { status: 409 }),
+      fetchRemote: async () => {
+        if (outcome === 'failure') throw new Error('GET failed');
+        if (outcome === 'aborted') controller.abort();
+        return outcome === 'saved' ? [serverCopy] : [];
+      },
+      onRejected: entry => rejected.push(entry), onSaved: entry => saved.push(entry),
+    });
+    assert.deepEqual(readPendingEntries(storage, 'owner'), outcome === 'failure' || outcome === 'aborted' ? [valid] : []);
+    assert.deepEqual(readServerHistory(storage, 'owner'), outcome === 'saved' ? [serverCopy] : []);
+    assert.deepEqual(saved, outcome === 'saved' ? [serverCopy] : []);
+    assert.deepEqual(readRejectedEntries(storage, 'owner'), outcome === 'missing' ? [valid] : []);
+    assert.deepEqual(rejected, outcome === 'missing' ? [valid] : []);
+  }
+});
+
+void test('failure to archive a rejected entry preserves its pending copy', async () => {
+  const storage = makeStorage();
+  queueEntry(storage, 'owner', valid);
+  const rejected: unknown[] = [];
+  await syncPendingEntries({
+    storage: { ...storage, setItem: () => { throw new Error('Storage full'); } },
+    owner: 'owner', pending: [valid], remote: [], signal: new AbortController().signal,
+    upload: async () => new Response(null, { status: 400 }), onRejected: entry => rejected.push(entry),
+  });
+  assert.deepEqual(readPendingEntries(storage, 'owner'), [valid]);
+  assert.deepEqual(rejected, []);
+});
+
+void test('history cache failure does not retain confirmed saves in the pending queue', async () => {
+  for (const status of [201, 409]) {
+    const storage = makeStorage();
+    queueEntry(storage, 'owner', valid);
+    const saved: unknown[] = [];
+    await syncPendingEntries({
+      storage: { ...storage, setItem: () => { throw new Error('Storage full'); } },
+      owner: 'owner', pending: [valid], remote: [], signal: new AbortController().signal,
+      upload: async () => new Response(null, { status }), fetchRemote: async () => [valid],
+      onSaved: entry => saved.push(entry), onRejected: () => assert.fail('Already saved'),
+    });
+    assert.deepEqual(readPendingEntries(storage, 'owner'), []);
+    assert.deepEqual(saved, [valid]);
+    assert.deepEqual(readServerHistory(storage, 'owner'), []);
+  }
 });
 
 void test('offline history restores confirmed saves for that owner without adding them to the upload queue', () => {
@@ -171,7 +302,7 @@ void test('save keeps a rejected draft and distinguishes validation from connect
       geniusRequest: { current: 0 }, extractWords: () => valid.words, mergeEntries, isValidEntry,
       invalidEntryMessage: '保存条件', ownerChangedMessage: '保存先が変わりました', pendingSaveMessage: 'サーバーへの保存を再試行',
       ensureEntryOwner: () => 'owner-1', document: { cookie: `lyricards_owner=${currentOwner}` }, readEntryOwner,
-      cacheServerEntries: () => {},
+      cacheServerEntries: () => {}, setSyncWarning: () => {},
       savePendingEntry: (owner: string, entry: unknown) => {
         assert.equal(owner, 'owner-1');
         cached.push(entry);
