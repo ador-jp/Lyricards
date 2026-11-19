@@ -47,12 +47,17 @@ void test('POST rejects invalid JSON and entries without calling D1, and preserv
   const source = readFileSync(new URL('../app/api/entries/route.ts', import.meta.url), 'utf8')
     .replace("import { env } from 'cloudflare:workers';", `
       export const calls = [];
+      export const state = { changes: 1, error: null };
       const env = { DB: { prepare(sql) { calls.push(sql); return { bind(...values) {
-        calls.push(values); return { async run() { calls.push('run'); } };
+        calls.push(values); return { async run() {
+          calls.push('run');
+          if (state.error) throw state.error;
+          return { meta: { changes: state.changes } };
+        } };
       } }; } } };
     `)
     .replace("'@/lib/entry'", JSON.stringify(new URL('./entry.ts', import.meta.url).href));
-  const { POST, calls } = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString('base64')}`);
+  const { POST, calls, state } = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString('base64')}`);
   for (const body of ['{', ...invalid.map(value => JSON.stringify(value))]) {
     const response = await POST(new Request('https://example.test/api/entries', { method: 'POST', body }));
     assert.equal(response.status, 400);
@@ -64,12 +69,25 @@ void test('POST rejects invalid JSON and entries without calling D1, and preserv
   assert.deepEqual(await response.json(), { saved: true });
   assert.deepEqual(calls[1], [valid.id, 'owner-1', valid.song, valid.artist, JSON.stringify(valid.words), valid.createdAt]);
   assert.equal(calls[2], 'run');
+  assert.match(calls[0], /ON CONFLICT\(id\) DO NOTHING$/);
+
+  state.changes = 0;
+  const duplicate = await POST(new Request('https://example.test/api/entries', { method: 'POST', body: JSON.stringify(valid) }));
+  assert.equal(duplicate.status, 409);
+  assert.deepEqual(await duplicate.json(), { error: 'この単語帳はすでに保存されています。' });
+
+  for (const message of ['D1 unavailable', 'NOT NULL constraint failed: entries.song']) {
+    state.error = new Error(message);
+    const failure = await POST(new Request('https://example.test/api/entries', { method: 'POST', body: JSON.stringify(valid) }));
+    assert.equal(failure.status, 500);
+    assert.equal(typeof (await failure.json()).error, 'string');
+  }
 });
 
 void test('save keeps a rejected draft and distinguishes validation from connectivity failures', async () => {
   const source = readFileSync(new URL('../app/page.tsx', import.meta.url), 'utf8');
   const save = source.slice(source.indexOf('  async function save()'), source.indexOf('  async function selectSong('));
-  for (const status of [201, 400, 503]) {
+  for (const status of [201, 400, 409, 503]) {
     const calls: Record<string, unknown[]> = {};
     const state: Record<string, unknown> = {
       selected: { trackName: 'Song', artistName: 'Artist' }, lyrics: 'dream', words: valid.words,
@@ -82,11 +100,11 @@ void test('save keeps a rejected draft and distinguishes validation from connect
     }
     await runInNewContext(`${stripTypeScriptTypes(save)}; save();`, { ...state, crypto });
     assert.equal(calls.setSaving.at(-1), false);
-    if (status === 400) {
+    if (status === 400 || status === 409) {
       assert.equal(calls.setEntries.length, 0);
       assert.equal(calls.setLyrics.length, 0);
       assert.equal(calls.setSelected.length, 0);
-      assert.match(String(calls.setStatus.at(-1)), /保存条件/);
+      assert.match(String(calls.setStatus.at(-1)), status === 400 ? /保存条件/ : /すでに保存されています/);
     } else {
       assert.equal(calls.setEntries.length, 1);
       assert.deepEqual(calls.setLyrics, ['']);

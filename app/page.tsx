@@ -109,6 +109,11 @@ export default function Home() {
         setSaving(false);
         return;
       }
+      if (response.status === 409) {
+        setStatus('この単語帳はすでに保存されています。保存済みの単語帳を確認してください。');
+        setSaving(false);
+        return;
+      }
       savedRemotely = response.ok;
     } catch {
       // Keep the entry in this browser when the server is unavailable.
