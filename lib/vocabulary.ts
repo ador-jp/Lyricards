@@ -1,5 +1,32 @@
 export type Word = { word: string; meaning?: string; meanings?: string[]; partOfSpeech?: string; example: string; exampleAuthor?: string; exampleUrl?: string };
 
+type DictionaryEntry = { word?: string; defs?: string[]; tags?: string[] };
+type Sentence = { id: number; text: string; owner?: string };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string');
+}
+
+export function parseDictionaryPayload(value: unknown): DictionaryEntry[] | null {
+  if (!Array.isArray(value) || !value.every(item => isRecord(item)
+    && (item.word === undefined || typeof item.word === 'string')
+    && (item.defs === undefined || isStringArray(item.defs))
+    && (item.tags === undefined || isStringArray(item.tags)))) return null;
+  return value;
+}
+
+export function parseSentencePayload(value: unknown): Sentence[] {
+  if (!isRecord(value) || !Array.isArray(value.data) || !value.data.every(item => isRecord(item)
+    && typeof item.id === 'number' && Number.isFinite(item.id)
+    && typeof item.text === 'string'
+    && (item.owner === undefined || typeof item.owner === 'string'))) return [];
+  return value.data;
+}
+
 const STOP = new Set('a an and are as at be been but by can did do for from had has have he her him his i if in into is it its me my no not of on or our out she so than that the their them there they this to up was we were what when where which who will with would you your'.split(' '));
 const NOISE = /^(?:\[.*\]|\d*\s*embed|you might also like|contributors?|translations?|read more|see .* live|get tickets.*|sign up|log in)$/i;
 
