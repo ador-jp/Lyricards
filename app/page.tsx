@@ -285,9 +285,33 @@ export default function Home() {
     const runBatch = async (items: Word[], retrying: boolean) => {
       let cursor = 0; let done = 0;
       const unresolved: Word[] = [];
+      const remaining: Word[] = [];
+      for (let offset = 0; offset < items.length; offset += 20) {
+        const chunk = items.slice(offset, offset + 20);
+        const requested = new Set(chunk.map(item => item.word));
+        const received = new Map<string, Word>();
+        try {
+          const response = await fetch('/api/dictionary', {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ words: chunk.map(item => item.word) }), signal: AbortSignal.timeout(15_000),
+          });
+          if (response.ok) {
+            const payload = await response.json() as { results?: Word[] };
+            if (Array.isArray(payload.results)) for (const result of payload.results) {
+              if (requested.has(result.word) && result.meanings?.length && result.partOfSpeech && result.exampleUrl) received.set(result.word, result);
+            }
+          }
+        } catch {
+          // Individual lookups retain retries when the batch is unavailable.
+        }
+        setDetails(current => ({ ...current, ...Object.fromEntries(received) }));
+        done += received.size;
+        setStatus(`${done} / ${items.length}語を${retrying ? '再取得' : '取得'}中…`);
+        remaining.push(...chunk.filter(item => !received.has(item.word)));
+      }
       const worker = async () => {
-        while (cursor < items.length) {
-          const item = items[cursor++];
+        while (cursor < remaining.length) {
+          const item = remaining[cursor++];
           const { result, resolved } = await lookup(item);
           setDetails(current => {
             const hasData = Boolean(result.partOfSpeech || result.meaning || result.meanings?.length || result.example);
@@ -298,7 +322,7 @@ export default function Home() {
           setStatus(`${done} / ${items.length}語を${retrying ? '再取得' : '取得'}中…`);
         }
       };
-      await Promise.all(Array.from({ length: Math.min(4, items.length) }, worker));
+      await worker();
       return unresolved;
     };
     try {
