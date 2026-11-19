@@ -174,6 +174,23 @@ void test('failure to archive a rejected entry preserves its pending copy', asyn
   assert.deepEqual(rejected, []);
 });
 
+void test('history cache failure does not retain confirmed saves in the pending queue', async () => {
+  for (const status of [201, 409]) {
+    const storage = makeStorage();
+    queueEntry(storage, 'owner', valid);
+    const saved: unknown[] = [];
+    await syncPendingEntries({
+      storage: { ...storage, setItem: () => { throw new Error('Storage full'); } },
+      owner: 'owner', pending: [valid], remote: [], signal: new AbortController().signal,
+      upload: async () => new Response(null, { status }), fetchRemote: async () => [valid],
+      onSaved: entry => saved.push(entry), onRejected: () => assert.fail('Already saved'),
+    });
+    assert.deepEqual(readPendingEntries(storage, 'owner'), []);
+    assert.deepEqual(saved, [valid]);
+    assert.deepEqual(readServerHistory(storage, 'owner'), []);
+  }
+});
+
 void test('offline history restores confirmed saves for that owner without adding them to the upload queue', () => {
   const storage = makeStorage();
   const synced = { ...valid, id: 'synced', createdAt: '2026-01-02T00:00:00.000Z' };

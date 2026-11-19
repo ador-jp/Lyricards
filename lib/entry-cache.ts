@@ -108,7 +108,11 @@ export async function syncPendingEntries(options: {
       if (signal.aborted) return;
       if (action !== 'retry') {
         if (action === 'reject') storage.setItem(rejectedPrefix(owner) + entry.id, JSON.stringify(entry));
-        if (action === 'saved') rememberServerEntries(storage, owner, [savedEntry]);
+        if (action === 'saved') {
+          try {
+            rememberServerEntries(storage, owner, [savedEntry]);
+          } catch { /* Confirmed saves do not require browser history storage. */ }
+        }
         storage.removeItem(pendingKey(owner, entry.id));
         // A 409 alone does not establish that the entry belongs to this owner.
         if (action === 'reject') options.onRejected?.(entry);
