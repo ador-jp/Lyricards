@@ -54,7 +54,7 @@ export async function GET(request: Request) {
     exampleAuthor: example?.owner ?? '',
     exampleUrl: example ? `https://tatoeba.org/en/sentences/show/${example.id}` : '',
   });
-  if (entries.length && sentenceResult.available && sentences.length) {
+  if (selected.meanings.length && sentenceResult.available && sentences.length) {
     if (cache.size >= CACHE_LIMIT) cache.delete(cache.keys().next().value!);
     cache.set(word, { expiresAt: Date.now() + CACHE_TTL, body });
   }

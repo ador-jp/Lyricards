@@ -104,7 +104,7 @@ void test('dictionary cache reuses successful lookups, expires, and does not cac
     fetch: async (url: string) => {
       calls += 1;
       return { ok: true, json: async () => url.includes('datamuse')
-        ? mode === 'error' ? null : mode === 'empty' ? [] : dictionary
+        ? mode === 'error' ? null : mode === 'empty' ? [] : mode === 'mismatch' ? [{ ...dictionary[0], word: 'dreamy' }] : dictionary
         : sentences };
     },
   }) as (request: Request) => Promise<Response>;
@@ -118,7 +118,7 @@ void test('dictionary cache reuses successful lookups, expires, and does not cac
   now += 3_600_001;
   await get(request());
   assert.equal(calls, 4);
-  for (const nextMode of ['error', 'empty']) {
+  for (const nextMode of ['error', 'empty', 'mismatch']) {
     mode = nextMode;
     now += 3_600_001;
     const before: number = calls;
