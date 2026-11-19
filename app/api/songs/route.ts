@@ -1,3 +1,5 @@
+import { fetchUpstream } from '../../../lib/upstream.ts';
+
 type Song = {
   trackId: number;
   trackName: string;
@@ -16,9 +18,8 @@ type DeezerTrack = {
 
 async function searchAppleMusic(query: string): Promise<Song[] | null> {
   try {
-    const response = await fetch(
+    const response = await fetchUpstream(
       `https://itunes.apple.com/search?media=music&entity=song&limit=6&term=${encodeURIComponent(query)}`,
-      { headers: { accept: 'application/json' } },
     );
     if (!response.ok) return null;
     const data = await response.json() as { results?: Partial<Song>[] };
@@ -45,9 +46,8 @@ async function searchAppleMusic(query: string): Promise<Song[] | null> {
 
 async function searchDeezer(query: string): Promise<Song[] | null> {
   try {
-    const response = await fetch(
+    const response = await fetchUpstream(
       `https://api.deezer.com/search?q=${encodeURIComponent(query)}&limit=6&lang=en`,
-      { headers: { accept: 'application/json' } },
     );
     if (!response.ok) return null;
     const data = await response.json() as { data?: DeezerTrack[] };

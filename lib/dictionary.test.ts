@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { stripTypeScriptTypes } from 'node:module';
-import test from 'node:test';
-import { runInNewContext } from 'node:vm';
+import test, { type TestContext } from 'node:test';
+import { GET } from '../app/api/dictionary/route.ts';
 import { dailyFallback, parseDictionaryPayload, parseSentencePayload, selectExample, selectMeanings } from './vocabulary.ts';
 
 const dictionary = [{ word: 'dream', defs: ['n\tA hope.'], tags: ['n'] }];
@@ -32,61 +30,53 @@ void test('sentence payload parsing preserves valid results and falls back for m
   for (const value of invalidSentences) assert.deepEqual(parseSentencePayload(value), []);
 });
 
-const source = readFileSync(new URL('../app/api/dictionary/route.ts', import.meta.url), 'utf8')
-  .replace(/^import .*;\n/, '')
-  .replace('export async function GET', 'async function GET');
-
-async function lookup(dictionaryData: unknown, sentenceData: unknown, unavailable = false, invalidJson = false) {
-  return await runInNewContext(`${stripTypeScriptTypes(source)}; GET(new Request('https://example.test/api/dictionary?word=dream'));`, {
-    dailyFallback, parseDictionaryPayload, parseSentencePayload, selectExample, selectMeanings,
-    Request, Response, URL, Promise, setTimeout: (callback: () => void) => { callback(); },
-    fetch: async (url: string) => {
-      const isDictionary = url.includes('datamuse');
-      if (!isDictionary && unavailable) throw new Error('unavailable');
-      return {
-        ok: true,
-        json: async () => {
-          if (invalidJson) throw new SyntaxError('Invalid JSON');
-          return isDictionary ? dictionaryData : sentenceData;
-        },
-      };
-    },
-  }) as Response;
+async function lookup(t: TestContext, dictionaryData: unknown, sentenceData: unknown, unavailable = false, invalidJson = false) {
+  const fetch = t.mock.method(globalThis, 'fetch', async (url: string) => {
+    const isDictionary = url.includes('datamuse');
+    if (!isDictionary && unavailable) throw new Error('unavailable');
+    if (invalidJson) return new Response('{');
+    return Response.json(isDictionary ? dictionaryData : sentenceData);
+  });
+  try {
+    return await GET(new Request('https://example.test/api/dictionary?word=dream'));
+  } finally {
+    fetch.mock.restore();
+  }
 }
 
-void test('dictionary route returns controlled 502 errors for invalid dictionary payloads and JSON', async () => {
+void test('dictionary route returns controlled 502 errors for invalid dictionary payloads and JSON', async t => {
   for (const value of invalidDictionaries) {
-    const response = await lookup(value, sentences);
+    const response = await lookup(t, value, sentences);
     assert.equal(response.status, 502);
     assert.deepEqual(await response.json(), { error: 'Dictionary service unavailable' });
   }
-  const response = await lookup(dictionary, sentences, false, true);
+  const response = await lookup(t, dictionary, sentences, false, true);
   assert.equal(response.status, 502);
   assert.deepEqual(await response.json(), { error: 'Dictionary service unavailable' });
 });
 
-void test('dictionary route preserves valid responses and uses fallback for invalid or unavailable sentences', async () => {
-  const response = await lookup(dictionary, sentences);
+void test('dictionary route preserves valid responses and uses fallback for invalid or unavailable sentences', async t => {
+  const response = await lookup(t, dictionary, sentences);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
     word: 'dream', meanings: ['A hope.'], partOfSpeech: 'noun', example: 'I have a dream.',
     exampleAuthor: 'author', exampleUrl: 'https://tatoeba.org/en/sentences/show/1',
   });
   for (const value of [...invalidSentences, { data: [] }]) {
-    const fallback = await lookup(dictionary, value);
+    const fallback = await lookup(t, dictionary, value);
     assert.equal(fallback.status, 200);
     assert.deepEqual(await fallback.json(), {
       word: 'dream', meanings: ['A hope.'], partOfSpeech: 'noun',
       example: dailyFallback('dream', 'noun'), exampleAuthor: '', exampleUrl: '',
     });
   }
-  const unavailable = await lookup(dictionary, null, true);
+  const unavailable = await lookup(t, dictionary, null, true);
   assert.equal(unavailable.status, 200);
   assert.deepEqual(await unavailable.json(), {
     word: 'dream', meanings: ['A hope.'], partOfSpeech: 'noun',
     example: dailyFallback('dream', 'noun'), exampleAuthor: '', exampleUrl: '',
   });
-  const empty = await lookup([], { data: [] });
+  const empty = await lookup(t, [], { data: [] });
   assert.equal(empty.status, 200);
   assert.deepEqual(await empty.json(), {
     word: 'dream', meanings: [], partOfSpeech: '', example: dailyFallback('dream', ''), exampleAuthor: '', exampleUrl: '',

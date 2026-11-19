@@ -1,3 +1,5 @@
+import { fetchUpstream } from '../../../lib/upstream.ts';
+
 type GeniusResult = {
   title?: unknown;
   artist_names?: unknown;
@@ -26,9 +28,7 @@ function cleanSongTitle(title: string) {
 }
 
 async function searchGenius(query: string) {
-  const response = await fetch(`https://genius.com/api/search/multi?q=${encodeURIComponent(query)}`, {
-    headers: { accept: 'application/json' },
-  });
+  const response = await fetchUpstream(`https://genius.com/api/search/multi?q=${encodeURIComponent(query)}`);
   if (!response.ok) return [];
   const data = await response.json() as { response?: { sections?: GeniusSection[] } };
   if (!Array.isArray(data.response?.sections)) return [];
