@@ -5,20 +5,69 @@ import { Download, ExternalLink, LoaderCircle, Music2, Search, Sparkles } from '
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { isValidEntry, type Entry } from '@/lib/entry';
+import { mergeEntries, queueEntry, readPendingEntries, readServerHistory, rememberServerEntries, syncPendingEntries } from '@/lib/entry-cache';
+import { ENTRY_OWNER_HEADER, entryOwnerCookie, readEntryOwner } from '@/lib/entry-owner';
 import { extractWords, type Word } from '@/lib/vocabulary';
 
 type Song = { trackId: number; trackName: string; artistName: string; artworkUrl100: string; trackViewUrl: string };
-type Entry = { id: string; song: string; artist: string; words: Word[]; createdAt: string };
-const STORAGE_KEY = 'lyricards.entries';
 
+const ownerChangedMessage = 'ブラウザの保存先が変わりました。入力を残したまま再試行できます。';
+const invalidEntryMessage = '単語帳の内容やサイズが保存条件を満たしていません。歌詞を短くするなど、内容を確認して再試行してください。';
+const pendingSaveMessage = 'このブラウザに一時保存しました。接続が戻るとサーバーへの保存を再試行します。';
+
+function ensureEntryOwner() {
+  const existing = readEntryOwner(document.cookie);
+  if (existing) return existing;
+  document.cookie = entryOwnerCookie(crypto.randomUUID());
+  return readEntryOwner(document.cookie);
+}
+
+function pendingEntries(owner: string) {
+  try {
+    return readPendingEntries(localStorage, owner);
+  } catch {
+    return [];
+  }
+}
+
+function offlineHistory(owner: string) {
+  const pending = pendingEntries(owner);
+  try {
+    return mergeEntries(readServerHistory(localStorage, owner), pending);
+  } catch {
+    return mergeEntries(pending);
+  }
+}
+
+function cacheServerEntries(owner: string, entries: Entry[]) {
+  try {
+    rememberServerEntries(localStorage, owner, entries);
+  } catch { /* Server saves do not require browser storage. */ }
+}
+
+function savePendingEntry(owner: string, entry: Entry) {
+  try {
+    queueEntry(localStorage, owner, entry);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function postEntry(entry: Entry, owner: string, signal?: AbortSignal) {
+  return fetch('/api/entries', {
+    method: 'POST', headers: { 'content-type': 'application/json', [ENTRY_OWNER_HEADER]: owner },
+    body: JSON.stringify(entry), signal,
+  });
+}
 
 export default function Home() {
   const [query, setQuery] = useState('');
   const [songs, setSongs] = useState<Song[]>([]);
   const [selected, setSelected] = useState<Song | null>(null);
   const [lyrics, setLyrics] = useState('');
-  const [entries, setEntries] = useState<Entry[]>([]);
-  const [entriesReady, setEntriesReady] = useState(false);
+  const [{ entries }, setHistory] = useState<{ owner: string | null; entries: Entry[] }>({ owner: null, entries: [] });
   const [status, setStatus] = useState('');
   const [searchStatus, setSearchStatus] = useState('');
   const [searching, setSearching] = useState(false);
@@ -35,21 +84,62 @@ export default function Home() {
   const words = useMemo(() => baseWords.map(item => ({ ...item, ...details[item.word], example: details[item.word]?.example || item.example })), [baseWords, details]);
 
   useEffect(() => {
-    fetch('/api/entries').then(async response => {
-      if (!response.ok) throw new Error();
-      const data = await response.json() as { entries: Entry[] };
-      setEntries(data.entries);
-    }).catch(() => {
-      try { setEntries(JSON.parse(localStorage.getItem(STORAGE_KEY) || localStorage.getItem('lylicards.entries') || localStorage.getItem('lyricbook.entries') || '[]')); } catch { /* empty */ }
-      setStatus('保存データを読み込めませんでした。新しい保存は再試行できます。');
-    }).finally(() => setEntriesReady(true));
+    let active: AbortController | undefined;
+    let requestedOwner: string | null = null;
+    const refresh = async () => {
+      active?.abort();
+      const { signal } = active = new AbortController();
+      const previousOwner = requestedOwner;
+      const owner = requestedOwner = ensureEntryOwner();
+      if (previousOwner && previousOwner !== owner) setStatus('');
+      const cached = owner ? offlineHistory(owner) : [];
+      setHistory(current => current.owner === owner ? current : { owner, entries: cached });
+      if (!owner) return;
+      try {
+        const response = await fetch('/api/entries', { headers: { [ENTRY_OWNER_HEADER]: owner }, signal });
+        if (!response.ok) throw new Error();
+        const data = await response.json() as { entries: Entry[] };
+        if (!Array.isArray(data.entries)) throw new Error();
+        if (signal.aborted || readEntryOwner(document.cookie) !== owner) return;
+        cacheServerEntries(owner, data.entries);
+        const pending = pendingEntries(owner);
+        setHistory(current => current.owner === owner
+          ? { owner, entries: mergeEntries(data.entries, pending, current.entries) }
+          : current);
+        if (pending.length) {
+          await syncPendingEntries({
+            storage: localStorage, owner, pending, remote: data.entries, signal,
+            upload: async entry => {
+              const result = await postEntry(entry, owner, signal);
+              if (result.ok) cacheServerEntries(owner, [entry]);
+              return result;
+            },
+          });
+          if (!signal.aborted && readEntryOwner(document.cookie) === owner && !readPendingEntries(localStorage, owner).length) {
+            setStatus(current => current === pendingSaveMessage ? '一時保存していた単語帳をサーバーに保存しました。' : current);
+          }
+        }
+      } catch {
+        if (!signal.aborted && readEntryOwner(document.cookie) === owner) {
+          setStatus(current => current || 'サーバーの保存データを読み込めませんでした。');
+        }
+      }
+    };
+    const reload = () => { void refresh(); };
+    const onCookieChange = () => {
+      if (readEntryOwner(document.cookie) !== requestedOwner) reload();
+    };
+    reload();
+    window.addEventListener('online', reload);
+    window.addEventListener('focus', reload);
+    window.cookieStore?.addEventListener('change', onCookieChange);
+    return () => {
+      active?.abort();
+      window.removeEventListener('online', reload);
+      window.removeEventListener('focus', reload);
+      window.cookieStore?.removeEventListener('change', onCookieChange);
+    };
   }, []);
-
-  useEffect(() => {
-    if (!entriesReady) return;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(entries)); } catch { /* Local storage is optional. */ }
-  }, [entries, entriesReady]);
-
 
   useEffect(() => {
     const context = (document as Document & { modelContext?: { registerTool: (tool: object, options: { signal: AbortSignal }) => void } }).modelContext;
@@ -66,9 +156,12 @@ export default function Home() {
         const extracted = extractWords(value.lyrics);
         if (!extracted.length) throw new Error('No English words found');
         const entry = { id: crypto.randomUUID(), song: value.song, artist: value.artist, words: extracted, createdAt: new Date().toISOString() };
-        const response = await fetch('/api/entries', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(entry) });
-        if (!response.ok) throw new Error('保存できませんでした');
-        setEntries(current => [entry, ...current]);
+        const owner = ensureEntryOwner();
+        if (!owner) throw new Error('保存できませんでした');
+        const response = await postEntry(entry, owner, lifecycle.signal);
+        if (!response.ok || readEntryOwner(document.cookie) !== owner) throw new Error('保存できませんでした');
+        cacheServerEntries(owner, [entry]);
+        setHistory(current => ({ owner, entries: mergeEntries([entry], current.owner === owner ? current.entries : []) }));
         return { saved: extracted.length, song: value.song };
       },
     }, { signal: lifecycle.signal });
@@ -100,12 +193,20 @@ export default function Home() {
     if (!words.length) return setStatus(extractWords(lyrics).length ? 'この歌詞の単語はすべて保存済みです。下のCSVから確認できます。' : '保存できる英単語が見つかりませんでした。');
     const savedWordCount = words.length;
     const entry = { id: crypto.randomUUID(), song: selected.trackName, artist: selected.artistName, words, createdAt: new Date().toISOString() };
+    if (!isValidEntry(entry)) return setStatus(invalidEntryMessage);
+    const owner = ensureEntryOwner();
+    if (!owner) return setStatus('保存するには、このブラウザで Cookie を有効にしてください。');
     setSaving(true); setStatus('保存中…');
     let savedRemotely = false;
     try {
-      const response = await fetch('/api/entries', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(entry) });
+      const response = await postEntry(entry, owner);
+      if (response.status === 412) {
+        setStatus(ownerChangedMessage);
+        setSaving(false);
+        return;
+      }
       if (response.status === 400) {
-        setStatus('単語帳の内容やサイズが保存条件を満たしていません。歌詞を短くするなど、内容を確認して再試行してください。');
+        setStatus(invalidEntryMessage);
         setSaving(false);
         return;
       }
@@ -116,16 +217,27 @@ export default function Home() {
       }
       savedRemotely = response.ok;
     } catch {
-      // Keep the entry in this browser when the server is unavailable.
+      // Fall back to browser storage when the server is unavailable.
     }
-    setEntries(current => [entry, ...current]);
+    if (readEntryOwner(document.cookie) !== owner) {
+      setStatus(ownerChangedMessage);
+      setSaving(false);
+      return;
+    }
+    if (!savedRemotely && !savePendingEntry(owner, entry)) {
+      setStatus('サーバーにもこのブラウザにも保存できませんでした。入力を残したまま再試行できます。');
+      setSaving(false);
+      return;
+    }
+    if (savedRemotely) cacheServerEntries(owner, [entry]);
+    setHistory(current => ({ owner, entries: mergeEntries([entry], current.owner === owner ? current.entries : []) }));
     setQuery(''); setSongs([]); setSearchStatus('');
     geniusRequest.current += 1;
     setSelected(null); setLyrics(''); setDetails({});
     setGeniusUrl(''); setGeniusStatus(''); setGeniusLoading(false);
     setStatus(savedRemotely
       ? `${savedWordCount}語を保存しました。続けて次の曲を検索できます。`
-      : '通信できなかったため、この端末に一時保存しました。続けて次の曲を検索できます。');
+      : pendingSaveMessage);
     setSaving(false);
   }
 

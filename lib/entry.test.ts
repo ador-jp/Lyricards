@@ -3,9 +3,73 @@ import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
+import { mergeEntries, queueEntry, readPendingEntries, readServerHistory, rememberServerEntries, syncPendingEntries } from './entry-cache.ts';
+import { ENTRY_OWNER_HEADER, readEntryOwner } from './entry-owner.ts';
 import { isValidEntry } from './entry.ts';
 
 const valid = { id: 'entry-1', song: 'Song', artist: 'Artist', createdAt: '2026-01-01T00:00:00.000Z', words: [{ word: 'dream', example: '' }] };
+
+function makeStorage() {
+  const values = new Map<string, string>();
+  return {
+    get length() { return values.size; },
+    key: (index: number) => [...values.keys()][index] ?? null,
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+    removeItem: (key: string) => { values.delete(key); },
+  };
+}
+
+void test('a new owner cannot see another owner’s pending or unscoped legacy entries', () => {
+  const offline = { ...valid, id: 'offline', createdAt: '2026-01-02T00:00:00.000Z' };
+  const remote = { ...valid, song: 'Server copy' };
+  const storage = makeStorage();
+  storage.setItem('lyricards.entries', JSON.stringify([valid]));
+  queueEntry(storage, 'original-owner', offline);
+  queueEntry(storage, 'original-owner', valid);
+  queueEntry(storage, 'new-owner', { ...valid, song: 'New owner copy' });
+
+  assert.deepEqual(mergeEntries([remote], readPendingEntries(storage, 'original-owner')), [offline, remote]);
+  assert.deepEqual(readPendingEntries(storage, 'new-owner'), [{ ...valid, song: 'New owner copy' }]);
+  assert.deepEqual(readPendingEntries(storage, 'unknown-owner'), []);
+  assert.equal(readEntryOwner('other_lyricards_owner=wrong; lyricards_owner=right'), 'right');
+});
+
+void test('reconnect uploads pending saves once and retries unconfirmed entries', async () => {
+  const owner = 'owner-1';
+  const storage = makeStorage();
+  const entries = ['present', 'offline', 'error', 'conflict', 'interrupted'].map(id => ({ ...valid, id }));
+  for (const entry of entries) queueEntry(storage, owner, entry);
+  queueEntry(storage, 'owner-2', { ...valid, id: 'offline' });
+  const uploadAttempts: string[] = [];
+  const run = (remote: typeof entries, statuses: Record<string, number>) => syncPendingEntries({
+    storage, owner, pending: readPendingEntries(storage, owner), remote, signal: new AbortController().signal,
+    upload: async ({ id }) => {
+      uploadAttempts.push(id);
+      if (!(id in statuses)) throw new TypeError('Offline');
+      return new Response(null, { status: statuses[id] });
+    },
+  });
+  await run([entries[0]], { offline: 201, error: 503, conflict: 409 });
+  assert.deepEqual(uploadAttempts, ['offline', 'error', 'conflict', 'interrupted']);
+  assert.deepEqual(readPendingEntries(storage, owner), entries.slice(2));
+  assert.equal(readPendingEntries(storage, 'owner-2').length, 1);
+
+  await run([entries[3]], { error: 201, interrupted: 201 });
+  assert.deepEqual(uploadAttempts.slice(4), ['error', 'interrupted']);
+  assert.deepEqual(readPendingEntries(storage, owner), []);
+});
+
+void test('offline history restores confirmed saves for that owner without adding them to the upload queue', () => {
+  const storage = makeStorage();
+  const synced = { ...valid, id: 'synced', createdAt: '2026-01-02T00:00:00.000Z' };
+  rememberServerEntries(storage, 'owner-1', [valid]);
+  rememberServerEntries(storage, 'owner-1', [synced]);
+  rememberServerEntries(storage, 'owner-2', []);
+  assert.deepEqual(readServerHistory(storage, 'owner-1'), [synced, valid]);
+  assert.deepEqual(readPendingEntries(storage, 'owner-1'), []);
+  assert.deepEqual(readServerHistory(storage, 'owner-2'), []);
+});
 
 void test('entry validation accepts minimal and enriched entries without changing them', () => {
   assert.equal(isValidEntry(valid), true);
@@ -56,16 +120,28 @@ void test('POST rejects invalid JSON and entries without calling D1, and preserv
         } };
       } }; } } };
     `)
-    .replace("'@/lib/entry'", JSON.stringify(new URL('./entry.ts', import.meta.url).href));
-  const { POST, calls, state } = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString('base64')}`);
+    .replace("'@/lib/entry'", JSON.stringify(new URL('./entry.ts', import.meta.url).href))
+    .replace("'@/lib/entry-owner'", JSON.stringify(new URL('./entry-owner.ts', import.meta.url).href));
+  const { GET, POST, calls, state } = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString('base64')}`);
+  for (const cookie of ['', 'lyricards_owner=owner-2']) {
+    const headers = { cookie, [ENTRY_OWNER_HEADER]: 'owner-1' };
+    const get = await GET(new Request('https://example.test/api/entries', { headers }));
+    const post = await POST(new Request('https://example.test/api/entries', { method: 'POST', headers, body: JSON.stringify(valid) }));
+    assert.equal(get.status, 412);
+    assert.equal(post.status, 412);
+    assert.equal(get.headers.get('set-cookie'), null);
+    assert.equal(post.headers.get('set-cookie'), null);
+    assert.equal(calls.length, 0);
+  }
   for (const body of ['{', ...invalid.map(value => JSON.stringify(value))]) {
     const response = await POST(new Request('https://example.test/api/entries', { method: 'POST', body }));
     assert.equal(response.status, 400);
     assert.equal(typeof (await response.json()).error, 'string');
     assert.equal(calls.length, 0);
   }
-  const response = await POST(new Request('https://example.test/api/entries', { method: 'POST', headers: { Cookie: 'lyricards_owner=owner-1' }, body: JSON.stringify(valid) }));
+  const response = await POST(new Request('https://example.test/api/entries', { method: 'POST', headers: { cookie: 'lyricards_owner=owner-1', [ENTRY_OWNER_HEADER]: 'owner-1' }, body: JSON.stringify(valid) }));
   assert.equal(response.status, 201);
+  assert.equal(response.headers.get('set-cookie'), null);
   assert.deepEqual(await response.json(), { saved: true });
   assert.deepEqual(calls[1], [valid.id, 'owner-1', valid.song, valid.artist, JSON.stringify(valid.words), valid.createdAt]);
   assert.equal(calls[2], 'run');
@@ -87,28 +163,43 @@ void test('POST rejects invalid JSON and entries without calling D1, and preserv
 void test('save keeps a rejected draft and distinguishes validation from connectivity failures', async () => {
   const source = readFileSync(new URL('../app/page.tsx', import.meta.url), 'utf8');
   const save = source.slice(source.indexOf('  async function save()'), source.indexOf('  async function selectSong('));
-  for (const status of [201, 400, 409, 503]) {
+  for (const [status, cacheAvailable, currentOwner = 'owner-1'] of [[201, false], [400, true], [409, true], [412, true], [503, true], [503, false], [null, true], [null, true, 'owner-2']] as const) {
     const calls: Record<string, unknown[]> = {};
+    const cached: unknown[] = [];
     const state: Record<string, unknown> = {
       selected: { trackName: 'Song', artistName: 'Artist' }, lyrics: 'dream', words: valid.words,
-      geniusRequest: { current: 0 }, extractWords: () => valid.words,
-      fetch: async () => new Response(null, { status }),
+      geniusRequest: { current: 0 }, extractWords: () => valid.words, mergeEntries, isValidEntry,
+      invalidEntryMessage: '保存条件', ownerChangedMessage: '保存先が変わりました', pendingSaveMessage: 'サーバーへの保存を再試行',
+      ensureEntryOwner: () => 'owner-1', document: { cookie: `lyricards_owner=${currentOwner}` }, readEntryOwner,
+      cacheServerEntries: () => {},
+      savePendingEntry: (owner: string, entry: unknown) => {
+        assert.equal(owner, 'owner-1');
+        cached.push(entry);
+        return cacheAvailable;
+      },
+      postEntry: async () => {
+        if (status === null) throw new TypeError('Offline');
+        return new Response(null, { status });
+      },
     };
-    for (const name of ['setStatus', 'setSaving', 'setEntries', 'setQuery', 'setSongs', 'setSearchStatus', 'setSelected', 'setLyrics', 'setDetails', 'setGeniusUrl', 'setGeniusStatus', 'setGeniusLoading']) {
+    for (const name of ['setStatus', 'setSaving', 'setHistory', 'setQuery', 'setSongs', 'setSearchStatus', 'setSelected', 'setLyrics', 'setDetails', 'setGeniusUrl', 'setGeniusStatus', 'setGeniusLoading']) {
       calls[name] = [];
       state[name] = (value: unknown) => { calls[name].push(value); };
     }
     await runInNewContext(`${stripTypeScriptTypes(save)}; save();`, { ...state, crypto });
     assert.equal(calls.setSaving.at(-1), false);
-    if (status === 400 || status === 409) {
-      assert.equal(calls.setEntries.length, 0);
+    const ownerChanged = status === 412 || currentOwner !== 'owner-1';
+    const rejected = status === 400 || status === 409 || ownerChanged;
+    assert.equal(cached.length, rejected || status === 201 ? 0 : 1);
+    if (rejected || (status !== 201 && !cacheAvailable)) {
+      assert.equal(calls.setHistory.length, 0);
       assert.equal(calls.setLyrics.length, 0);
       assert.equal(calls.setSelected.length, 0);
-      assert.match(String(calls.setStatus.at(-1)), status === 400 ? /保存条件/ : /すでに保存されています/);
+      assert.match(String(calls.setStatus.at(-1)), status === 400 ? /保存条件/ : status === 409 ? /すでに保存されています/ : ownerChanged ? /保存先が変わりました/ : /入力を残したまま/);
     } else {
-      assert.equal(calls.setEntries.length, 1);
+      assert.equal(calls.setHistory.length, 1);
       assert.deepEqual(calls.setLyrics, ['']);
-      assert.match(String(calls.setStatus.at(-1)), status === 201 ? /語を保存しました/ : /一時保存/);
+      assert.match(String(calls.setStatus.at(-1)), status === 201 ? /語を保存しました/ : /サーバーへの保存を再試行/);
     }
   }
 });
