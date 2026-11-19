@@ -104,6 +104,11 @@ export default function Home() {
     let savedRemotely = false;
     try {
       const response = await fetch('/api/entries', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(entry) });
+      if (response.status === 400) {
+        setStatus('単語帳の内容やサイズが保存条件を満たしていません。歌詞を短くするなど、内容を確認して再試行してください。');
+        setSaving(false);
+        return;
+      }
       savedRemotely = response.ok;
     } catch {
       // Keep the entry in this browser when the server is unavailable.

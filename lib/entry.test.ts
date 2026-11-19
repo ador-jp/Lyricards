@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
+import { runInNewContext } from 'node:vm';
 import { isValidEntry } from './entry.ts';
 
 const valid = { id: 'entry-1', song: 'Song', artist: 'Artist', createdAt: '2026-01-01T00:00:00.000Z', words: [{ word: 'dream', example: '' }] };
@@ -63,4 +64,33 @@ void test('POST rejects invalid JSON and entries without calling D1, and preserv
   assert.deepEqual(await response.json(), { saved: true });
   assert.deepEqual(calls[1], [valid.id, 'owner-1', valid.song, valid.artist, JSON.stringify(valid.words), valid.createdAt]);
   assert.equal(calls[2], 'run');
+});
+
+void test('save keeps a rejected draft and distinguishes validation from connectivity failures', async () => {
+  const source = readFileSync(new URL('../app/page.tsx', import.meta.url), 'utf8');
+  const save = source.slice(source.indexOf('  async function save()'), source.indexOf('  async function selectSong('));
+  for (const status of [201, 400, 503]) {
+    const calls: Record<string, unknown[]> = {};
+    const state: Record<string, unknown> = {
+      selected: { trackName: 'Song', artistName: 'Artist' }, lyrics: 'dream', words: valid.words,
+      geniusRequest: { current: 0 }, extractWords: () => valid.words,
+      fetch: async () => new Response(null, { status }),
+    };
+    for (const name of ['setStatus', 'setSaving', 'setEntries', 'setQuery', 'setSongs', 'setSearchStatus', 'setSelected', 'setLyrics', 'setDetails', 'setGeniusUrl', 'setGeniusStatus', 'setGeniusLoading']) {
+      calls[name] = [];
+      state[name] = (value: unknown) => { calls[name].push(value); };
+    }
+    await runInNewContext(`${stripTypeScriptTypes(save)}; save();`, { ...state, crypto });
+    assert.equal(calls.setSaving.at(-1), false);
+    if (status === 400) {
+      assert.equal(calls.setEntries.length, 0);
+      assert.equal(calls.setLyrics.length, 0);
+      assert.equal(calls.setSelected.length, 0);
+      assert.match(String(calls.setStatus.at(-1)), /保存条件/);
+    } else {
+      assert.equal(calls.setEntries.length, 1);
+      assert.deepEqual(calls.setLyrics, ['']);
+      assert.match(String(calls.setStatus.at(-1)), status === 201 ? /語を保存しました/ : /一時保存/);
+    }
+  }
 });
