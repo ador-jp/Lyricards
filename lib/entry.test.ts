@@ -359,9 +359,10 @@ void test('dictionary lookups from a previous song stop updating the page once a
     const calls: Record<string, unknown[]> = { setDetails: [], setStatus: [], setLoading: [] };
     const geniusRequest = { current: 0 };
     const state: Record<string, unknown> = {
-      baseWords: [{ word: 'dream', example: '' }, { word: 'night', example: '' }], geniusRequest, setTimeout, clearTimeout, AbortController,
-      fetch: async () => {
+      baseWords: [{ word: 'dream', example: '' }, { word: 'night', example: '' }], geniusRequest, setTimeout, clearTimeout, AbortController, AbortSignal,
+      fetch: async (url: string) => {
         if (switchSong) geniusRequest.current += 1;
+        if (url === '/api/dictionary') return Response.json({ results: [{ word: 'dream', meanings: ['A vision.'], partOfSpeech: 'noun', example: 'I had a dream.', exampleUrl: 'https://tatoeba.org/en/sentences/show/1' }] });
         return Response.json({ word: 'dream', meaning: 'A vision.', partOfSpeech: 'noun', example: 'I had a dream.' });
       },
     };
