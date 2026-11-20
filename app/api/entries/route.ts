@@ -1,8 +1,17 @@
 import { env } from 'cloudflare:workers';
-import { isValidEntry } from '@/lib/entry';
+import { isValidEntry, type Entry } from '@/lib/entry';
 import { ENTRY_OWNER_HEADER, entryOwnerCookie, readEntryOwner } from '@/lib/entry-owner';
 
-type StoredEntry = { id: string; song: string; artist: string; words: unknown[]; createdAt: string };
+type StoredRow = { id: string; song: string; artist: string; words_json: string; created_at: string };
+
+function storedEntry(row: StoredRow): Entry | null {
+  try {
+    const entry = { id: row.id, song: row.song, artist: row.artist, words: JSON.parse(row.words_json) as unknown, createdAt: row.created_at };
+    return isValidEntry(entry) ? entry : null;
+  } catch {
+    return null;
+  }
+}
 
 function response(body: unknown, status = 200, newOwner?: string) {
   const headers = new Headers({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'private, no-store' });
@@ -28,9 +37,13 @@ export async function GET(request: Request) {
   const { owner, reply } = context;
   const db = (env as unknown as { DB?: D1Database }).DB;
   if (!db) return reply({ error: '保存機能の準備中です。' }, 503);
-  const rows = await db.prepare('SELECT id, song, artist, words_json, created_at FROM entries WHERE owner_id = ? ORDER BY created_at DESC').bind(owner).all<{ id: string; song: string; artist: string; words_json: string; created_at: string }>();
-  const entries: StoredEntry[] = rows.results.map(row => ({ id: row.id, song: row.song, artist: row.artist, words: JSON.parse(row.words_json), createdAt: row.created_at }));
-  return reply({ entries });
+  let rows: StoredRow[];
+  try {
+    rows = (await db.prepare('SELECT id, song, artist, words_json, created_at FROM entries WHERE owner_id = ? ORDER BY created_at DESC').bind(owner).all<StoredRow>()).results;
+  } catch {
+    return reply({ error: '保存データを読み込めませんでした。再試行してください。' }, 500);
+  }
+  return reply({ entries: rows.map(storedEntry).filter(entry => entry !== null) });
 }
 
 export async function POST(request: Request) {
