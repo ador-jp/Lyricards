@@ -263,7 +263,7 @@ export default function Home() {
     setHistory(current => ({ owner, entries: mergeEntries([entry], current.owner === owner ? current.entries : []) }));
     setQuery(''); setSongs([]); setSearchStatus('');
     geniusRequest.current += 1;
-    setSelected(null); setLyrics(''); setDetails({});
+    setSelected(null); setLyrics(''); setDetails({}); setLoading(false);
     setGeniusUrl(''); setGeniusStatus(''); setGeniusLoading(false);
     setStatus(savedRemotely
       ? `${savedWordCount}語を保存しました。続けて次の曲を検索できます。`
@@ -285,7 +285,7 @@ export default function Home() {
 
   async function selectSong(song: Song) {
     const requestId = ++geniusRequest.current;
-    setSelected(song); setLyrics(''); setDetails({});
+    setSelected(song); setLyrics(''); setDetails({}); setLoading(false);
     setGeniusUrl(''); setGeniusStatus(''); setGeniusLoading(true);
     setStatus('曲を選択しました。Geniusの歌詞ページを確認して、歌詞を下欄へ貼り付けてください。');
     try {
@@ -303,6 +303,8 @@ export default function Home() {
 
   async function fetchMeanings() {
     if (!baseWords.length) return;
+    const requestId = geniusRequest.current;
+    const isCurrent = () => geniusRequest.current === requestId;
     setLoading(true); setStatus(`0 / ${baseWords.length}語を取得中…`);
     const lookup = async (item: Word): Promise<{ result: Word; resolved: boolean }> => {
       for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -328,9 +330,10 @@ export default function Home() {
       let cursor = 0; let done = 0;
       const unresolved: Word[] = [];
       const worker = async () => {
-        while (cursor < items.length) {
+        while (cursor < items.length && isCurrent()) {
           const item = items[cursor++];
           const { result, resolved } = await lookup(item);
+          if (!isCurrent()) return;
           setDetails(current => {
             const hasData = Boolean(result.partOfSpeech || result.meaning || result.meanings?.length || result.example);
             return { ...current, [item.word]: hasData ? result : current[item.word] ?? result };
@@ -345,18 +348,20 @@ export default function Home() {
     };
     try {
       let unresolved = await runBatch(baseWords, false);
+      if (!isCurrent()) return;
       const automaticRetryCount = unresolved.length;
       if (automaticRetryCount) {
         setStatus(`${automaticRetryCount}語を自動で再取得中…`);
         await new Promise<void>(resolve => setTimeout(resolve, 750));
         unresolved = await runBatch(unresolved, true);
+        if (!isCurrent()) return;
       }
       setStatus(unresolved.length
         ? `${baseWords.length - unresolved.length}語を取得、${unresolved.length}語は自動再取得後も品詞・意味を取得できませんでした。再試行できます。`
         : automaticRetryCount
           ? `${baseWords.length}語の意味と例文を取得しました。未取得だった${automaticRetryCount}語は自動で再取得しました。`
           : `${baseWords.length}語の意味と例文を取得しました。`);
-    } finally { setLoading(false); }
+    } finally { if (isCurrent()) setLoading(false); }
   }
 
   function downloadCsv() {
