@@ -347,7 +347,7 @@ void test('save keeps a rejected draft and distinguishes validation from connect
     } else {
       assert.equal(calls.setHistory.length, 1);
       assert.deepEqual(calls.setLyrics, ['']);
-      assert.match(String(calls.setStatus.at(-1)), status === 201 ? /語を保存しました/ : /サーバーへの保存を再試行/);
+      assert.match(String(calls.setStatus.at(-1)), status === 201 ? /^\d+語を保存しました/ : /^サーバーへの保存を再試行/);
     }
   }
 });
@@ -376,8 +376,28 @@ void test('a save that finishes after another song was chosen keeps the new song
   assert.equal(calls.setHistory.length, 1);
   assert.equal(geniusRequest.current, 1);
   for (const name of ['setSelected', 'setLyrics', 'setDetails', 'setQuery', 'setSongs', 'setGeniusUrl']) assert.equal(calls[name].length, 0, name);
-  assert.match(String(calls.setStatus.at(-1)), /語を保存しました/);
+  assert.match(String(calls.setStatus.at(-1)), /^「Song」: \d+語を保存しました/);
   assert.equal(calls.setSaving.at(-1), false);
+});
+
+void test('a save result that arrives after another song was chosen names the song it belongs to', async () => {
+  const source = readFileSync(new URL('../app/page.tsx', import.meta.url), 'utf8');
+  const save = source.slice(source.indexOf('  async function save()'), source.indexOf('  async function selectSong('));
+  for (const [status, expected] of [[400, /^「Song」: 保存条件/], [409, /^「Song」: この単語帳はすでに保存されています/], [412, /^「Song」: 保存先が変わりました/]] as const) {
+    const statuses: unknown[] = [];
+    const geniusRequest = { current: 0 };
+    const state: Record<string, unknown> = {
+      selected: { trackName: 'Song', artistName: 'Artist' }, lyrics: 'dream', words: valid.words,
+      geniusRequest, extractWords: () => valid.words, mergeEntries, isValidEntry,
+      invalidEntryMessage: '保存条件', ownerChangedMessage: '保存先が変わりました', pendingSaveMessage: 'サーバーへの保存を再試行',
+      ensureEntryOwner: () => 'owner-1', document: { cookie: 'lyricards_owner=owner-1' }, readEntryOwner,
+      cacheServerEntries: () => {}, setSyncWarning: () => {}, savePendingEntry: () => true,
+      postEntry: async () => { geniusRequest.current += 1; return new Response(null, { status }); },
+      setStatus: (value: unknown) => { statuses.push(value); }, setSaving: () => {},
+    };
+    await runInNewContext(`${stripTypeScriptTypes(save)}; save();`, { ...state, crypto });
+    assert.match(String(statuses.at(-1)), expected);
+  }
 });
 
 void test('dictionary lookups from a previous song stop updating the page once another song is chosen', async () => {
