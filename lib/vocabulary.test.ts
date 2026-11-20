@@ -16,6 +16,11 @@ void test('all unique words are returned without quoting lyrics and with exclusi
   assert.equal(words[0].example, '');
 });
 
+void test('curly apostrophes keep contractions whole instead of splitting off fragments', () => {
+  const words = extractWords('I don\u2019t know why you\u2019re gone\nWe won\u2019t stop, it isn\u02bct over \u2018cause');
+  assert.deepEqual(words.map(x => x.word).sort(), ["cause", "don't", 'gone', "isn't", 'know', 'over', 'stop', 'why', "won't", "you're"]);
+});
+
 void test('daily examples prefer useful exact matches and always have a fallback', () => {
   const example = selectExample('must', [
     { id: 1, text: 'Warmongers must fuck off.' },
