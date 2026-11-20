@@ -1,4 +1,4 @@
-const FORMULA_PREFIX = /^[=+\-@\t\r]/;
+const FORMULA_PREFIX = /^(?:[\t\r]|\s*[=+\-@＝＋－＠])/;
 
 export function csvCell(value: string) {
   const safe = FORMULA_PREFIX.test(value) ? `'${value}` : value;
