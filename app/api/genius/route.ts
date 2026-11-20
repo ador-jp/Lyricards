@@ -24,7 +24,7 @@ function normalize(value: string) {
 function cleanSongTitle(title: string) {
   return title
     .replace(/\s+[([](?:feat\.?|ft\.?|featuring|with)\s[^)\]]*[)\]]/gi, '')
-    .replace(/\s+-\s+[^-]*(?:remaster(?:ed)?|version|mix|edit|live|acoustic|mono|stereo)[^-]*$/i, '')
+    .replace(/\s+-\s+(?:(?:\d{4}|radio|single|album|original|digital|deluxe)\s+)*(?:remaster(?:ed)?|version|mix|edit|live|acoustic|mono|stereo)(?:\s+(?:\d{4}|version|mix|edit))*$/i, '')
     .replace(/\s*[([][^)\]]*(?:remaster(?:ed)?|version|mix|edit|live|acoustic|mono|stereo)[^)\]]*[)\]]\s*$/i, '')
     .trim();
 }
@@ -54,25 +54,27 @@ async function searchGenius(query: string) {
 
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
-  const song = cleanSongTitle(params.get('song')?.trim() ?? '');
+  const rawSong = params.get('song')?.trim() ?? '';
+  const song = cleanSongTitle(rawSong);
   const artist = params.get('artist')?.trim() ?? '';
   if (!song) return Response.json({ error: 'Song is required.' }, { status: 400 });
 
+  const expectedTitles = [...new Set([normalize(rawSong), normalize(song)])];
   const expectedTitle = normalize(song);
   const expectedArtist = normalize(artist);
   const cacheControl = 'public, max-age=3600, s-maxage=86400';
   const combinedResults = artist ? await searchGenius(`${song} ${artist}`) : [];
-  const artistMatch = combinedResults?.find(result => {
+  const artistMatch = expectedTitles.map(title => combinedResults?.find(result => {
     const resultArtist = normalize(result.artist_names);
-    return normalize(result.title) === expectedTitle
+    return normalize(result.title) === title
       && (resultArtist.includes(expectedArtist) || expectedArtist.includes(resultArtist));
-  });
+  })).find(result => result !== undefined);
   if (artistMatch) {
     return Response.json({ url: artistMatch.url }, { headers: { 'cache-control': cacheControl } });
   }
 
   const titleResults = await searchGenius(song);
-  const titleMatch = titleResults?.find(result => normalize(result.title) === expectedTitle)
+  const titleMatch = expectedTitles.map(title => titleResults?.find(result => normalize(result.title) === title)).find(result => result !== undefined)
     ?? titleResults?.find(result => normalize(result.title).startsWith(`${expectedTitle} `));
   if (titleMatch) {
     return Response.json(
