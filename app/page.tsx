@@ -5,6 +5,7 @@ import { Download, ExternalLink, LoaderCircle, Music2, Search, Sparkles } from '
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { toCsv } from '@/lib/csv';
 import { isValidEntry, type Entry } from '@/lib/entry';
 import { discardRejectedEntries, learnedWords, mergeEntries, queueEntry, readPendingEntries, readRejectedEntries, readServerHistory, rememberServerEntries, syncPendingEntries } from '@/lib/entry-cache';
 import { ENTRY_OWNER_HEADER, entryOwnerCookie, readEntryOwner } from '@/lib/entry-owner';
@@ -362,7 +363,7 @@ export default function Home() {
     const savedRows = entries.flatMap(e => e.words.map(w => [e.song, e.artist, w.word, w.partOfSpeech ?? '', (w.meanings ?? [w.meaning ?? '']).filter(Boolean).join(' / '), w.example, w.exampleUrl ?? '', e.createdAt]));
     const draftRows = selected ? words.map(w => [selected.trackName, selected.artistName, w.word, w.partOfSpeech ?? '', (w.meanings ?? [w.meaning ?? '']).filter(Boolean).join(' / '), w.example, w.exampleUrl ?? '', new Date().toISOString()]) : [];
     const rows = [['曲名', 'アーティスト', '単語', '品詞', '意味', '例文', '例文出典', '保存日時'], ...savedRows, ...draftRows];
-    const csv = rows.map(row => row.map(v => `"${v.replace(/"/g, '""')}"`).join(',')).join('\n');
+    const csv = toCsv(rows);
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
     a.download = 'lyricards.csv'; document.body.appendChild(a); a.click(); a.remove();
