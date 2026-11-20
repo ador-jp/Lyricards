@@ -91,6 +91,9 @@ for (const [song, artist, expectedQuery] of [
   ['Old Town Road (feat. Billy Ray Cyrus) (Remix)', 'Lil Nas X', 'Old Town Road Lil Nas X'],
   ['Stay [with Justin Bieber]', 'The Kid LAROI', 'Stay The Kid LAROI'],
   ['Here Comes The Sun - Remastered 2009', 'The Beatles', 'Here Comes The Sun The Beatles'],
+  ['Dream - Remix', 'Artist', 'Dream Artist'],
+  ['Dream - Club Mix', 'Artist', 'Dream Artist'],
+  ['Dream - Live at Wembley', 'Artist', 'Dream Artist'],
   ["(With You) I'm Born Again", 'Billy Preston & Syreeta', "(With You) I'm Born Again Billy Preston & Syreeta"],
 ]) {
   void test(`Genius matches "${song}" after dropping featured artists and version suffixes`, async t => {

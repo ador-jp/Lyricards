@@ -24,7 +24,7 @@ function normalize(value: string) {
 function cleanSongTitle(title: string) {
   return title
     .replace(/\s+[([](?:feat\.?|ft\.?|featuring|with)\s[^)\]]*[)\]]/gi, '')
-    .replace(/\s+-\s+(?:(?:\d{4}|radio|single|album|original|digital|deluxe)\s+)*(?:remaster(?:ed)?|version|mix|edit|live|acoustic|mono|stereo)(?:\s+(?:\d{4}|version|mix|edit))*$/i, '')
+    .replace(/\s+-\s+(?:(?:(?:\d{4}|radio|single|album|original|digital|deluxe|club|extended)\s+)*(?:remaster(?:ed)?|remix|version|mix|edit|live|acoustic|mono|stereo)(?:\s+(?:\d{4}|version|mix|edit))*|live\s+(?:at|from|in)\s.+)$/i, '')
     .replace(/\s*[([][^)\]]*(?:remaster(?:ed)?|version|mix|edit|live|acoustic|mono|stereo)[^)\]]*[)\]]\s*$/i, '')
     .trim();
 }
