@@ -330,7 +330,7 @@ void test('save keeps a rejected draft and distinguishes validation from connect
         return new Response(null, { status });
       },
     };
-    for (const name of ['setStatus', 'setSaving', 'setHistory', 'setQuery', 'setSongs', 'setSearchStatus', 'setSelected', 'setLyrics', 'setDetails', 'setGeniusUrl', 'setGeniusStatus', 'setGeniusLoading']) {
+    for (const name of ['setStatus', 'setSaving', 'setHistory', 'setQuery', 'setSongs', 'setSearchStatus', 'setSelected', 'setLyrics', 'setDetails', 'setGeniusUrl', 'setGeniusStatus', 'setGeniusLoading', 'setLoading']) {
       calls[name] = [];
       state[name] = (value: unknown) => { calls[name].push(value); };
     }
@@ -348,6 +348,33 @@ void test('save keeps a rejected draft and distinguishes validation from connect
       assert.equal(calls.setHistory.length, 1);
       assert.deepEqual(calls.setLyrics, ['']);
       assert.match(String(calls.setStatus.at(-1)), status === 201 ? /語を保存しました/ : /サーバーへの保存を再試行/);
+    }
+  }
+});
+
+void test('dictionary lookups from a previous song stop updating the page once another song is chosen', async () => {
+  const source = readFileSync(new URL('../app/page.tsx', import.meta.url), 'utf8');
+  const fetchMeanings = source.slice(source.indexOf('  async function fetchMeanings()'), source.indexOf('  function downloadCsv()'));
+  for (const switchSong of [false, true]) {
+    const calls: Record<string, unknown[]> = { setDetails: [], setStatus: [], setLoading: [] };
+    const geniusRequest = { current: 0 };
+    const state: Record<string, unknown> = {
+      baseWords: [{ word: 'dream', example: '' }, { word: 'night', example: '' }], geniusRequest, setTimeout, clearTimeout, AbortController,
+      fetch: async () => {
+        if (switchSong) geniusRequest.current += 1;
+        return Response.json({ word: 'dream', meaning: 'A vision.', partOfSpeech: 'noun', example: 'I had a dream.' });
+      },
+    };
+    for (const name of Object.keys(calls)) state[name] = (value: unknown) => { calls[name].push(value); };
+    await runInNewContext(`${stripTypeScriptTypes(fetchMeanings)}; fetchMeanings();`, state);
+    if (switchSong) {
+      assert.equal(calls.setDetails.length, 0);
+      assert.deepEqual(calls.setLoading, [true]);
+      assert.equal(calls.setStatus.length, 1);
+    } else {
+      assert.equal(calls.setDetails.length, 2);
+      assert.deepEqual(calls.setLoading, [true, false]);
+      assert.match(String(calls.setStatus.at(-1)), /2語の意味と例文を取得しました/);
     }
   }
 });
