@@ -35,7 +35,7 @@ export function cleanLyrics(text: string): string {
 }
 
 export function extractWords(text: string, excluded = new Set<string>()): Word[] {
-  const lines = cleanLyrics(text).replace(/[\u2018\u2019\u02bc]/g, "'").split('\n');
+  const lines = cleanLyrics(text).normalize('NFKD').replace(/\p{M}/gu, '').replace(/[\u2018\u2019\u02bc]/g, "'").split('\n');
   const counts = new Map<string, number>();
   for (const line of lines) for (const raw of line.toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g) ?? []) {
     if (raw.length <= 2 || STOP.has(raw) || excluded.has(raw)) continue;

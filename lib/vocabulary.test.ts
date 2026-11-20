@@ -21,6 +21,11 @@ void test('curly apostrophes keep contractions whole instead of splitting off fr
   assert.deepEqual(words.map(x => x.word).sort(), ["cause", "don't", 'gone', "isn't", 'know', 'over', 'stop', 'why', "won't", "you're"]);
 });
 
+void test('accented letters are folded so words are not split into fragments', () => {
+  const words = extractWords('Beyonc\u00e9 sang a clich\u00e9 in the caf\u00e9\nSe\u00f1orita, so na\u00efve, de\u0301ja\u0300 vu');
+  assert.deepEqual(words.map(x => x.word).sort(), ['beyonce', 'cafe', 'cliche', 'deja', 'naive', 'sang', 'senorita']);
+});
+
 void test('daily examples prefer useful exact matches and always have a fallback', () => {
   const example = selectExample('must', [
     { id: 1, text: 'Warmongers must fuck off.' },
