@@ -36,3 +36,18 @@ void test('daily examples prefer useful exact matches and always have a fallback
   assert.equal(dailyFallback('must', 'verb'), 'I must finish this before dinner.');
   assert.equal(dailyFallback('quiet', 'adjective'), 'That sounds quiet to me.');
 });
+
+void test('fallback examples follow the part of speech and only treat real -ed/-ing forms as inflections', () => {
+  const cases: Array<[string, string, string]> = [
+    ['bed', 'noun', 'We talked about the bed over lunch.'],
+    ['thing', 'noun', 'We talked about the thing over lunch.'],
+    ['tired', 'adjective', 'That sounds tired to me.'],
+    ['need', 'verb', 'I often need when I have time.'],
+    ['bring', 'verb', 'I often bring when I have time.'],
+    ['sing', '', 'Could you use the word “sing” in a sentence?'],
+    ['walked', 'verb', 'Someone walked me after work.'],
+    ['running', 'verb', 'We talked about running after work.'],
+    ['must', 'noun', 'I must finish this before dinner.'],
+  ];
+  for (const [word, partOfSpeech, expected] of cases) assert.equal(dailyFallback(word, partOfSpeech), expected, word);
+});
