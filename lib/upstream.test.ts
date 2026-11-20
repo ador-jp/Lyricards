@@ -86,6 +86,51 @@ void test('Genius tries the title-only query after the artist-qualified query ti
   verifyRequests(['genius.com', 'genius.com']);
 });
 
+for (const [song, artist, expectedQuery] of [
+  ['Peaches (feat. Daniel Caesar & Giveon)', 'Justin Bieber', 'Peaches Justin Bieber'],
+  ['Old Town Road (feat. Billy Ray Cyrus) (Remix)', 'Lil Nas X', 'Old Town Road Lil Nas X'],
+  ['Stay [with Justin Bieber]', 'The Kid LAROI', 'Stay The Kid LAROI'],
+  ['Here Comes The Sun - Remastered 2009', 'The Beatles', 'Here Comes The Sun The Beatles'],
+  ['Dream - Remix', 'Artist', 'Dream Artist'],
+  ['Dream - Club Mix', 'Artist', 'Dream Artist'],
+  ['Dream - Live at Wembley', 'Artist', 'Dream Artist'],
+  ["(With You) I'm Born Again", 'Billy Preston & Syreeta', "(With You) I'm Born Again Billy Preston & Syreeta"],
+]) {
+  void test(`Genius matches "${song}" after dropping featured artists and version suffixes`, async t => {
+    const queries: (string | null)[] = [];
+    const title = expectedQuery.slice(0, -artist.length - 1);
+    const url = `https://genius.com/${title.replace(/ /g, '-')}-lyrics`;
+    const verifyRequests = mockUpstream(t, (_host, _expire, requestUrl) => {
+      queries.push(requestUrl.searchParams.get('q'));
+      return Response.json({ response: { sections: [{ type: 'song', hits: [
+        { type: 'song', result: { title, artist_names: `${artist} (Ft. Someone)`, url } },
+      ] }] } });
+    });
+    const response = await lookupGenius(new Request(`https://example.test/api/genius?song=${encodeURIComponent(song)}&artist=${encodeURIComponent(artist)}`));
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { url });
+    assert.deepEqual(queries, [expectedQuery]);
+    verifyRequests(['genius.com']);
+  });
+}
+
+void test('Genius keeps ordinary words after a dash and prefers the full title over the cleaned one', async t => {
+  const pages: Record<string, string> = {
+    Song: 'https://genius.com/Other-song-lyrics',
+    'Song - Deliver Me': 'https://genius.com/Song-deliver-me-lyrics',
+    'Song - Mixed Feelings': 'https://genius.com/Song-mixed-feelings-lyrics',
+    'Song - Live Forever': 'https://genius.com/Song-live-forever-lyrics',
+    'Song (With You)': 'https://genius.com/Song-with-you-lyrics',
+  };
+  mockUpstream(t, () => Response.json({ response: { sections: [{ type: 'song', hits: Object.entries(pages).map(([title, url]) => (
+    { type: 'song', result: { title, artist_names: 'Artist', url } }
+  )) }] } }));
+  for (const title of Object.keys(pages).slice(1)) {
+    const response = await lookupGenius(new Request(`https://example.test/api/genius?song=${encodeURIComponent(title)}&artist=Artist`));
+    assert.deepEqual(await response.json(), { url: pages[title] }, title);
+  }
+});
+
 for (const artistSearchTimesOut of [true, false]) {
   void test(`Genius distinguishes an incomplete search from no match (artist search times out: ${artistSearchTimesOut})`, async t => {
     const verifyRequests = mockUpstream(t, (_host, expire, url) => {

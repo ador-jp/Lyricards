@@ -169,6 +169,7 @@ for (const batchState of ['success', 'empty', 'error']) {
     const statuses: string[] = [];
     const result = { word: 'dream', meanings: ['A hope.'], partOfSpeech: 'noun', example: 'I have a dream.', exampleUrl: 'https://tatoeba.org/en/sentences/show/1' };
     await runInNewContext(`${fetchMeaningsSource}; fetchMeanings();`, {
+      geniusRequest: { current: 0 },
       baseWords: [{ word: 'dream', example: '' }, { word: 'world', example: '' }],
       setLoading: (value: boolean) => loading.push(value),
       setStatus: (value: string) => statuses.push(value),
@@ -198,6 +199,7 @@ void test('client skips empty lists and bounds batch sizes', async () => {
   for (const size of [0, 41]) {
     const baseWords = Array.from({ length: size }, (_, index) => ({ word: `word${index}`, example: '' }));
     await runInNewContext(`${fetchMeaningsSource}; fetchMeanings();`, {
+      geniusRequest: { current: 0 },
       baseWords, setLoading: () => {}, setStatus: () => {}, setDetails: () => {},
       AbortController, AbortSignal, setTimeout: () => 0, clearTimeout: () => {},
       fetch: async (_url: string, init: RequestInit) => {
@@ -219,6 +221,7 @@ for (const failure of ['http', 'timeout', 'empty', 'malformed']) {
     const statuses: string[] = [];
     const timeouts: number[] = [];
     await runInNewContext(`${fetchMeaningsSource}; fetchMeanings();`, {
+      geniusRequest: { current: 0 },
       baseWords: Array.from({ length: 30 }, (_, index) => ({ word: `word${index}`, example: '' })),
       setLoading: () => {}, setStatus: (value: string) => statuses.push(value),
       setDetails: (update: (current: Record<string, unknown>) => Record<string, unknown>) => Object.assign(details, update(details)),
@@ -246,5 +249,48 @@ for (const failure of ['http', 'timeout', 'empty', 'malformed']) {
     assert.deepEqual(timeouts, [3_500]);
     assert.equal(Object.keys(details).length, 30);
     assert.match(statuses.at(-1)!, /^30語の意味と例文を取得しました/);
+  });
+}
+
+for (const staleAt of ['batch', 'json', 'get', 'pace']) {
+  void test(`song switches during ${staleAt} stop dictionary updates and further requests`, async () => {
+    const geniusRequest = { current: 0 };
+    const details: unknown[] = [];
+    const loading: boolean[] = [];
+    const statuses: string[] = [];
+    let posts = 0; let gets = 0;
+    const result = { word: 'dream', meanings: ['A vision.'], partOfSpeech: 'noun', exampleUrl: 'https://tatoeba.org/en/sentences/show/1' };
+    await runInNewContext(`${fetchMeaningsSource}; fetchMeanings();`, {
+      geniusRequest,
+      baseWords: Array.from({ length: 21 }, (_, index) => ({ word: index ? `word${index}` : 'dream', example: '' })),
+      setDetails: (value: unknown) => details.push(value),
+      setLoading: (value: boolean) => loading.push(value),
+      setStatus: (value: string) => statuses.push(value),
+      AbortController, AbortSignal, Date: { now: () => 0 }, clearTimeout: () => {},
+      setTimeout: (callback: () => void, ms: number) => {
+        if (ms !== 15_000) { geniusRequest.current++; queueMicrotask(callback); }
+        return 0;
+      },
+      fetch: async (url: string) => {
+        if (url === '/api/dictionary') {
+          posts++;
+          if (staleAt === 'batch') geniusRequest.current++;
+          if (staleAt === 'pace') return Response.json({ error: 'Unavailable' }, { status: 502 });
+          return { ok: true, json: async () => {
+            if (staleAt === 'json') geniusRequest.current++;
+            return { results: [result] };
+          } };
+        }
+        gets++;
+        if (staleAt === 'get') geniusRequest.current++;
+        return Response.json(result);
+      },
+    });
+    const stoppedInBatch = staleAt === 'batch' || staleAt === 'json';
+    assert.equal(posts, stoppedInBatch || staleAt === 'pace' ? 1 : 2);
+    assert.equal(gets, stoppedInBatch ? 0 : 1);
+    assert.equal(details.length, stoppedInBatch ? 0 : staleAt === 'pace' ? 1 : 2);
+    assert.equal(statuses.length, stoppedInBatch ? 1 : staleAt === 'pace' ? 2 : 3);
+    assert.deepEqual(loading, [true]);
   });
 }
