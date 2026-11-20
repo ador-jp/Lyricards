@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { isValidEntry, type Entry } from '@/lib/entry';
-import { discardRejectedEntries, mergeEntries, queueEntry, readPendingEntries, readRejectedEntries, readServerHistory, rememberServerEntries, syncPendingEntries } from '@/lib/entry-cache';
+import { discardRejectedEntries, learnedWords, mergeEntries, queueEntry, readPendingEntries, readRejectedEntries, readServerHistory, rememberServerEntries, syncPendingEntries } from '@/lib/entry-cache';
 import { ENTRY_OWNER_HEADER, entryOwnerCookie, readEntryOwner } from '@/lib/entry-owner';
 import { extractWords, type Word } from '@/lib/vocabulary';
 
@@ -82,7 +82,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const geniusRequest = useRef(0);
-  const learned = useMemo(() => new Set(entries.flatMap(entry => entry.words.map(item => item.word.toLowerCase()))), [entries]);
+  const learned = useMemo(() => learnedWords(entries, rejected), [entries, rejected]);
   const baseWords = useMemo(() => extractWords(lyrics, excludeLearned ? learned : new Set()), [lyrics, excludeLearned, learned]);
   const words = useMemo(() => baseWords.map(item => ({ ...item, ...details[item.word], example: details[item.word]?.example || item.example })), [baseWords, details]);
 

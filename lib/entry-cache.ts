@@ -22,6 +22,12 @@ export function mergeEntries(...lists: Entry[][]): Entry[] {
   return [...byId.values()].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 }
 
+export function learnedWords(entries: Entry[], rejected: Entry[]): Set<string> {
+  const rejectedIds = new Set(rejected.map(entry => entry.id));
+  return new Set(entries.filter(entry => !rejectedIds.has(entry.id))
+    .flatMap(entry => entry.words.map(item => item.word.toLowerCase())));
+}
+
 export function readPendingEntries(storage: Pick<Storage, 'length' | 'key' | 'getItem'>, owner: string): Entry[] {
   return readLocalEntries(storage, pendingPrefix(owner));
 }

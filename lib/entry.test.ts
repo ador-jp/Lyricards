@@ -3,11 +3,26 @@ import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
-import { discardRejectedEntries, mergeEntries, queueEntry, readPendingEntries, readRejectedEntries, readServerHistory, rememberServerEntries, saveResponseAction, syncPendingEntries } from './entry-cache.ts';
+import { discardRejectedEntries, learnedWords, mergeEntries, queueEntry, readPendingEntries, readRejectedEntries, readServerHistory, rememberServerEntries, saveResponseAction, syncPendingEntries } from './entry-cache.ts';
 import { ENTRY_OWNER_HEADER, readEntryOwner } from './entry-owner.ts';
 import { isValidEntry } from './entry.ts';
+import { extractWords } from './vocabulary.ts';
 
 const valid = { id: 'entry-1', song: 'Song', artist: 'Artist', createdAt: '2026-01-01T00:00:00.000Z', words: [{ word: 'dream', example: '' }] };
+
+void test('learned words include saved and pending entries but not rejected entry ids', () => {
+  const saved = { ...valid, id: 'saved', words: [{ word: 'Dream', example: '' }] };
+  const pending = { ...valid, id: 'pending', words: [{ word: 'stars', example: '' }] };
+  const rejected = { ...valid, words: [{ word: 'sunshine', example: '' }, { word: 'dream', example: '' }] };
+  const entries = mergeEntries([saved, pending, rejected]);
+
+  assert.deepEqual(learnedWords(entries, []), new Set(['dream', 'stars', 'sunshine']));
+  const learned = learnedWords(entries, [{ ...rejected, words: [] }]);
+  assert.deepEqual(learned, new Set(['dream', 'stars']));
+  assert.deepEqual(extractWords('sunshine dream stars', learned).map(item => item.word), ['sunshine']);
+  assert.deepEqual(learnedWords([], [rejected]), new Set());
+  assert.deepEqual(learnedWords([rejected], [rejected]), new Set());
+});
 
 function makeStorage() {
   const values = new Map<string, string>();
@@ -90,6 +105,7 @@ void test('sync reports and removes permanent rejections without retrying them o
     assert.deepEqual(readPendingEntries(storage, 'owner'), []);
     assert.deepEqual(readServerHistory(storage, 'owner'), []);
     assert.deepEqual(readRejectedEntries(storage, 'owner'), [valid]);
+    assert.deepEqual(learnedWords(mergeEntries(readServerHistory(storage, 'owner'), [valid], readRejectedEntries(storage, 'owner')), readRejectedEntries(storage, 'owner')), new Set());
     assert.deepEqual(readRejectedEntries(storage, 'another-owner'), []);
     discardRejectedEntries(storage, 'another-owner');
     assert.deepEqual(readRejectedEntries(storage, 'owner'), [valid]);
@@ -113,6 +129,7 @@ void test('sync retains transient failures and does not mutate an aborted upload
       onRejected: () => assert.fail('Must not report a rejection'),
     });
     assert.deepEqual(readPendingEntries(storage, 'owner'), [valid]);
+    assert.deepEqual(learnedWords(readPendingEntries(storage, 'owner'), readRejectedEntries(storage, 'owner')), new Set(['dream']));
   }
 });
 
