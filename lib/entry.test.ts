@@ -347,7 +347,7 @@ void test('save keeps a rejected draft and distinguishes validation from connect
     } else {
       assert.equal(calls.setHistory.length, 1);
       assert.deepEqual(calls.setLyrics, ['']);
-      assert.match(String(calls.setStatus.at(-1)), status === 201 ? /語を保存しました/ : /サーバーへの保存を再試行/);
+      assert.match(String(calls.setStatus.at(-1)), status === 201 ? /^\d+語を保存しました/ : /^サーバーへの保存を再試行/);
     }
   }
 });

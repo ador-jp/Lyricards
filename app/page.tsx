@@ -263,15 +263,15 @@ export default function Home() {
     }
     if (savedRemotely) { cacheServerEntries(owner, [entry]); setSyncWarning(''); }
     setHistory(current => ({ owner, entries: mergeEntries([entry], current.owner === owner ? current.entries : []) }));
+    report(savedRemotely
+      ? `${savedWordCount}語を保存しました。続けて次の曲を検索できます。`
+      : pendingSaveMessage);
     if (geniusRequest.current === requestId) {
       setQuery(''); setSongs([]); setSearchStatus('');
       geniusRequest.current += 1;
       setSelected(null); setLyrics(''); setDetails({}); setLoading(false);
       setGeniusUrl(''); setGeniusStatus(''); setGeniusLoading(false);
     }
-    report(savedRemotely
-      ? `${savedWordCount}語を保存しました。続けて次の曲を検索できます。`
-      : pendingSaveMessage);
     setSaving(false);
   }
 
