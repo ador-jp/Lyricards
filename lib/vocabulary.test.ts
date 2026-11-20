@@ -46,7 +46,8 @@ void test('fallback examples follow the part of speech and only treat real -ed/-
     ['bring', 'verb', 'I often bring when I have time.'],
     ['sing', '', 'Could you use the word “sing” in a sentence?'],
     ['walked', 'verb', 'Someone walked me after work.'],
-    ['freed', 'verb', 'Someone freed me after work.'],
+    ['freed', 'verb', 'Could you use the word “freed” in a sentence?'],
+    ['agreed', 'verb', 'Could you use the word “agreed” in a sentence?'],
     ['running', 'verb', 'We talked about running after work.'],
     ['must', 'noun', 'I must finish this before dinner.'],
   ];
