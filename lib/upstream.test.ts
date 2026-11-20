@@ -86,6 +86,30 @@ void test('Genius tries the title-only query after the artist-qualified query ti
   verifyRequests(['genius.com', 'genius.com']);
 });
 
+for (const [song, artist, expectedQuery] of [
+  ['Peaches (feat. Daniel Caesar & Giveon)', 'Justin Bieber', 'Peaches Justin Bieber'],
+  ['Old Town Road (feat. Billy Ray Cyrus) (Remix)', 'Lil Nas X', 'Old Town Road Lil Nas X'],
+  ['Stay [with Justin Bieber]', 'The Kid LAROI', 'Stay The Kid LAROI'],
+  ['Here Comes The Sun - Remastered 2009', 'The Beatles', 'Here Comes The Sun The Beatles'],
+]) {
+  void test(`Genius matches "${song}" after dropping featured artists and version suffixes`, async t => {
+    const queries: (string | null)[] = [];
+    const title = expectedQuery.slice(0, -artist.length - 1);
+    const url = `https://genius.com/${title.replace(/ /g, '-')}-lyrics`;
+    const verifyRequests = mockUpstream(t, (_host, _expire, requestUrl) => {
+      queries.push(requestUrl.searchParams.get('q'));
+      return Response.json({ response: { sections: [{ type: 'song', hits: [
+        { type: 'song', result: { title, artist_names: `${artist} (Ft. Someone)`, url } },
+      ] }] } });
+    });
+    const response = await lookupGenius(new Request(`https://example.test/api/genius?song=${encodeURIComponent(song)}&artist=${encodeURIComponent(artist)}`));
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { url });
+    assert.deepEqual(queries, [expectedQuery]);
+    verifyRequests(['genius.com']);
+  });
+}
+
 for (const artistSearchTimesOut of [true, false]) {
   void test(`Genius distinguishes an incomplete search from no match (artist search times out: ${artistSearchTimesOut})`, async t => {
     const verifyRequests = mockUpstream(t, (_host, expire, url) => {
