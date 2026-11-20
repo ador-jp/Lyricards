@@ -23,7 +23,7 @@ function normalize(value: string) {
 
 function cleanSongTitle(title: string) {
   return title
-    .replace(/\s*[([](?:feat\.?|ft\.?|featuring|with)\s[^)\]]*[)\]]/gi, '')
+    .replace(/\s+[([](?:feat\.?|ft\.?|featuring|with)\s[^)\]]*[)\]]/gi, '')
     .replace(/\s+-\s+[^-]*(?:remaster(?:ed)?|version|mix|edit|live|acoustic|mono|stereo)[^-]*$/i, '')
     .replace(/\s*[([][^)\]]*(?:remaster(?:ed)?|version|mix|edit|live|acoustic|mono|stereo)[^)\]]*[)\]]\s*$/i, '')
     .trim();
