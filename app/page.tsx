@@ -222,6 +222,7 @@ export default function Home() {
     if (!lyrics.trim()) return setStatus('英語の歌詞を貼り付けてください。');
     if (!words.length) return setStatus(extractWords(lyrics).length ? 'この歌詞の単語はすべて保存済みです。下のCSVから確認できます。' : '保存できる英単語が見つかりませんでした。');
     const savedWordCount = words.length;
+    const requestId = geniusRequest.current;
     const entry = { id: crypto.randomUUID(), song: selected.trackName, artist: selected.artistName, words, createdAt: new Date().toISOString() };
     if (!isValidEntry(entry)) return setStatus(invalidEntryMessage);
     const owner = ensureEntryOwner();
@@ -261,10 +262,12 @@ export default function Home() {
     }
     if (savedRemotely) { cacheServerEntries(owner, [entry]); setSyncWarning(''); }
     setHistory(current => ({ owner, entries: mergeEntries([entry], current.owner === owner ? current.entries : []) }));
-    setQuery(''); setSongs([]); setSearchStatus('');
-    geniusRequest.current += 1;
-    setSelected(null); setLyrics(''); setDetails({}); setLoading(false);
-    setGeniusUrl(''); setGeniusStatus(''); setGeniusLoading(false);
+    if (geniusRequest.current === requestId) {
+      setQuery(''); setSongs([]); setSearchStatus('');
+      geniusRequest.current += 1;
+      setSelected(null); setLyrics(''); setDetails({}); setLoading(false);
+      setGeniusUrl(''); setGeniusStatus(''); setGeniusLoading(false);
+    }
     setStatus(savedRemotely
       ? `${savedWordCount}語を保存しました。続けて次の曲を検索できます。`
       : pendingSaveMessage);
