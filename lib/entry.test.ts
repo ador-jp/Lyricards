@@ -351,3 +351,40 @@ void test('save keeps a rejected draft and distinguishes validation from connect
     }
   }
 });
+
+void test('GET skips unreadable stored entries and returns a controlled error when D1 fails', async () => {
+  const source = readFileSync(new URL('../app/api/entries/route.ts', import.meta.url), 'utf8')
+    .replace("import { env } from 'cloudflare:workers';", `
+      export const state = { rows: [], error: null, owner: null };
+      const env = { DB: { prepare() { return { bind(owner) {
+        state.owner = owner;
+        return { async all() {
+          if (state.error) throw state.error;
+          return { results: state.rows };
+        } };
+      } }; } } };
+    `)
+    .replace("'@/lib/entry'", JSON.stringify(new URL('./entry.ts', import.meta.url).href))
+    .replace("'@/lib/entry-owner'", JSON.stringify(new URL('./entry-owner.ts', import.meta.url).href));
+  const { GET, state } = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString('base64')}`);
+  const row = (id: string, words_json: string, created_at = valid.createdAt) => ({ id, song: valid.song, artist: valid.artist, words_json, created_at });
+  const headers = { cookie: 'lyricards_owner=owner-1', [ENTRY_OWNER_HEADER]: 'owner-1' };
+  state.rows = [
+    row('good', JSON.stringify(valid.words)),
+    row('truncated', '[{"word":"dream"'),
+    row('not-array', '{"word":"dream"}'),
+    row('empty', '[]'),
+    row('bad-word', JSON.stringify([{ word: 42, example: '' }])),
+    row('bad-date', JSON.stringify(valid.words), 'not a date'),
+  ];
+  const response = await GET(new Request('https://example.test/api/entries', { headers }));
+  assert.equal(response.status, 200);
+  assert.equal(state.owner, 'owner-1');
+  assert.deepEqual(await response.json(), { entries: [{ ...valid, id: 'good' }] });
+
+  state.error = new Error('D1 unavailable');
+  const failure = await GET(new Request('https://example.test/api/entries', { headers }));
+  assert.equal(failure.status, 500);
+  assert.equal(failure.headers.get('cache-control'), 'private, no-store');
+  assert.equal(typeof (await failure.json()).error, 'string');
+});
