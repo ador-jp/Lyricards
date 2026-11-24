@@ -18,7 +18,12 @@ void test('all unique words are returned without quoting lyrics and with exclusi
 
 void test('curly apostrophes keep contractions whole instead of splitting off fragments', () => {
   const words = extractWords('I don\u2019t know why you\u2019re gone\nWe won\u2019t stop, it isn\u02bct over \u2018cause');
-  assert.deepEqual(words.map(x => x.word).sort(), ["cause", "don't", 'gone', "isn't", 'know', 'over', 'stop', 'why', "won't", "you're"]);
+  assert.deepEqual(words.map(x => x.word).sort(), ["cause", "don't", 'gone', "isn't", 'know', 'over', 'stop', 'why', "won't"]);
+});
+
+void test('contractions of stop words are skipped like the stop words themselves', () => {
+  const words = extractWords("I'm sure it's fine, you\u2019re here\nWe've said they'll know what's there's that'd\nShe can't, he won't, let's dance");
+  assert.deepEqual(words.map(x => x.word).sort(), ["can't", 'dance', 'fine', 'here', 'know', "let's", 'said', 'sure', "won't"]);
 });
 
 void test('accented letters are folded so words are not split into fragments', () => {
