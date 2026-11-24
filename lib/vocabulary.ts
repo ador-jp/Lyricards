@@ -28,8 +28,8 @@ export function parseSentencePayload(value: unknown): Sentence[] {
 }
 
 const STOP = new Set('a an and are as at be been but by can did do for from had has have he her him his i if in into is it its me my no not of on or our out she so than that the their them there they this to up was we were what when where which who will with would you your'.split(' '));
-const STOP_CONTRACTION = /^([a-z]+)'(?:m|s|re|ve|ll|d)$/;
-const isStopWord = (word: string) => STOP.has(word) || STOP.has(STOP_CONTRACTION.exec(word)?.[1] ?? '');
+const STOP_CONTRACTION = /^(?:i|you|he|she|it|we|they|that|there|what|who|where|when)'(?:m|s|re|ve|ll|d)$/;
+const isStopWord = (word: string) => STOP.has(word) || STOP_CONTRACTION.test(word);
 const NOISE = /^(?:\[.*\]|\d*\s*embed|you might also like|contributors?|translations?|read more|see .* live|get tickets.*|sign up|log in)$/i;
 
 export function cleanLyrics(text: string): string {

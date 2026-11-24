@@ -22,8 +22,8 @@ void test('curly apostrophes keep contractions whole instead of splitting off fr
 });
 
 void test('contractions of stop words are skipped like the stop words themselves', () => {
-  const words = extractWords("I'm sure it's fine, you\u2019re here\nWe've said they'll know what's there's that'd\nShe can't, he won't, let's dance");
-  assert.deepEqual(words.map(x => x.word).sort(), ["can't", 'dance', 'fine', 'here', 'know', "let's", 'said', 'sure', "won't"]);
+  const words = extractWords("I'm sure it's fine, you\u2019re here\nWe've said they'll know what's there's that'd\nShe can't, he won't, let's dance\nOpen the can\u2019s lid, the will's end");
+  assert.deepEqual(words.map(x => x.word).sort(), ["can's", "can't", 'dance', 'end', 'fine', 'here', 'know', "let's", 'lid', 'open', 'said', 'sure', "will's", "won't"]);
 });
 
 void test('accented letters are folded so words are not split into fragments', () => {
