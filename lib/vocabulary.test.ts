@@ -16,6 +16,16 @@ void test('all unique words are returned without quoting lyrics and with exclusi
   assert.equal(words[0].example, '');
 });
 
+void test('curly apostrophes keep contractions whole instead of splitting off fragments', () => {
+  const words = extractWords('I don\u2019t know why you\u2019re gone\nWe won\u2019t stop, it isn\u02bct over \u2018cause');
+  assert.deepEqual(words.map(x => x.word).sort(), ["cause", "don't", 'gone', "isn't", 'know', 'over', 'stop', 'why', "won't", "you're"]);
+});
+
+void test('accented letters are folded so words are not split into fragments', () => {
+  const words = extractWords('Beyonc\u00e9 sang a clich\u00e9 in the caf\u00e9\nSe\u00f1orita, so na\u00efve, de\u0301ja\u0300 vu');
+  assert.deepEqual(words.map(x => x.word).sort(), ['beyonce', 'cafe', 'cliche', 'deja', 'naive', 'sang', 'senorita']);
+});
+
 void test('daily examples prefer useful exact matches and always have a fallback', () => {
   const example = selectExample('must', [
     { id: 1, text: 'Warmongers must fuck off.' },
@@ -25,4 +35,21 @@ void test('daily examples prefer useful exact matches and always have a fallback
   assert.equal(example?.text, 'I must take medicine.');
   assert.equal(dailyFallback('must', 'verb'), 'I must finish this before dinner.');
   assert.equal(dailyFallback('quiet', 'adjective'), 'That sounds quiet to me.');
+});
+
+void test('fallback examples follow the part of speech and only treat real -ed/-ing forms as inflections', () => {
+  const cases: Array<[string, string, string]> = [
+    ['bed', 'noun', 'We talked about the bed over lunch.'],
+    ['thing', 'noun', 'We talked about the thing over lunch.'],
+    ['tired', 'adjective', 'That sounds tired to me.'],
+    ['need', 'verb', 'I often need when I have time.'],
+    ['bring', 'verb', 'I often bring when I have time.'],
+    ['sing', '', 'Could you use the word “sing” in a sentence?'],
+    ['walked', 'verb', 'Someone walked me after work.'],
+    ['freed', 'verb', 'Could you use the word “freed” in a sentence?'],
+    ['agreed', 'verb', 'Could you use the word “agreed” in a sentence?'],
+    ['running', 'verb', 'We talked about running after work.'],
+    ['must', 'noun', 'I must finish this before dinner.'],
+  ];
+  for (const [word, partOfSpeech, expected] of cases) assert.equal(dailyFallback(word, partOfSpeech), expected, word);
 });
