@@ -53,3 +53,8 @@ void test('fallback examples follow the part of speech and only treat real -ed/-
   ];
   for (const [word, partOfSpeech, expected] of cases) assert.equal(dailyFallback(word, partOfSpeech), expected, word);
 });
+
+void test('encyclopedia entries about songs or albums are not used as word meanings', () => {
+  assert.deepEqual(selectMeanings(['N\t"Wanna" is a song by South Korean girl group Kara.']), { meanings: [], partOfSpeech: '' });
+  assert.deepEqual(selectMeanings(['N\t"Hello" is a song by Adele.', 'n\tA greeting.', 'v\tTo greet with "hello".']), { meanings: ['A greeting.', 'To greet with "hello".'], partOfSpeech: 'n' });
+});
