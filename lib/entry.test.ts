@@ -400,6 +400,22 @@ void test('a save result that arrives after another song was chosen names the so
   }
 });
 
+void test('a temporary-save message labeled with an earlier song is still replaced once the sync finishes', () => {
+  const source = readFileSync(new URL('../app/page.tsx', import.meta.url), 'utf8');
+  const helper = source.slice(source.indexOf('const pendingSaveMessage ='), source.indexOf('const rejectedSaveMessage ='));
+  const isPendingSaveStatus = runInNewContext(`${stripTypeScriptTypes(helper)}; isPendingSaveStatus;`) as (status: string) => boolean;
+  const pending = 'このブラウザに一時保存しました。接続が戻るとサーバーへの保存を再試行します。';
+  assert.equal(isPendingSaveStatus(pending), true);
+  assert.equal(isPendingSaveStatus(`「Song A」: ${pending}`), true);
+  assert.equal(isPendingSaveStatus(''), false);
+  assert.equal(isPendingSaveStatus('3語を保存しました。続けて次の曲を検索できます。'), false);
+  assert.equal(isPendingSaveStatus(`「Song A」: 単語帳の内容やサイズが保存条件を満たしていません。`), false);
+  const replacements = source.match(/setStatus\(current => [^\n]*一時保存していた単語帳をサーバーに保存しました/g) ?? [];
+  assert.equal(replacements.length, 1);
+  assert.match(replacements[0], /isPendingSaveStatus\(current\)/);
+  assert.doesNotMatch(source, /current === pendingSaveMessage/);
+});
+
 void test('dictionary lookups from a previous song stop updating the page once another song is chosen', async () => {
   const source = readFileSync(new URL('../app/page.tsx', import.meta.url), 'utf8');
   const fetchMeanings = source.slice(source.indexOf('  async function fetchMeanings()'), source.indexOf('  function downloadCsv()'));
