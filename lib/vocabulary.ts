@@ -46,7 +46,8 @@ export function extractWords(text: string, excluded = new Set<string>()): Word[]
 }
 
 export function selectMeanings(defs: string[], limit = 3): { meanings: string[]; partOfSpeech: string } {
-  const parsed = defs.map(def => { const [partOfSpeech, meaning = ''] = def.split('\t', 2); return { partOfSpeech, meaning: meaning.trim() }; });
+  const parsed = defs.map(def => { const [partOfSpeech, meaning = ''] = def.split('\t', 2); return { partOfSpeech, meaning: meaning.trim() }; })
+    .filter(item => item.partOfSpeech !== 'N');
   const useful = parsed.filter(item => item.meaning && !/^(?:a\s+)?(?:surname|given name|family name)[.;]?$/i.test(item.meaning));
   const selected = (useful.length ? useful : parsed).filter(item => item.meaning).slice(0, limit);
   return { meanings: selected.map(item => item.meaning), partOfSpeech: selected[0]?.partOfSpeech ?? '' };
