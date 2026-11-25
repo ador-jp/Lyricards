@@ -36,6 +36,29 @@ npm test
 npm run build
 ```
 
+### Sentry tracing
+
+API tracing is disabled unless the Worker has a runtime `SENTRY_DSN` binding.
+For local development, put it in the gitignored `.dev.vars` file (never in a
+`VITE_*` variable). Optional bindings are `SENTRY_TRACES_SAMPLE_RATE` (0–1,
+default `1`; invalid values fall back to `1`) and `SENTRY_ENVIRONMENT` (default
+`production`; use `development` locally).
+
+The custom `worker.ts` entry wraps vinext with `@sentry/cloudflare`. Only
+`/api/*` requests are instrumented, named by method and pathname without query
+parameters. Outgoing fetches have `http.client` child spans; Sentry flushes via
+the execution context's `waitUntil`, without delaying responses.
+Both errors and transactions omit request headers, cookies, user IP addresses,
+and request/upstream URL query strings.
+
+`.openai/hosting.json` identifies the hosted project and its D1/R2 bindings;
+it does not contain Sentry credentials. Set the bindings in the hosting
+provider's runtime environment/secret settings for project
+`appgprj_6aac98b0151c8191bde9b132169d3115`. If managing its Cloudflare Worker
+directly, use Workers & Pages → the deployed Worker → Settings → Variables
+and Secrets (`SENTRY_DSN` as a secret, the other two as text variables).
+Local `.dev.vars` values are not deployed.
+
 ## Stack
 
 - Vinext / React / TypeScript
