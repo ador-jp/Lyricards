@@ -418,12 +418,12 @@ for (const method of ['GET', 'POST']) {
       });
       const get = () => GET(new Request('https://example.test/api/dictionary?word=dream'));
       const post = () => POST(new Request('https://example.test/api/dictionary', { method: 'POST', body: JSON.stringify({ words: ['dream'] }) }));
-      const first = await (await (method === 'GET' ? get() : post())).json();
+      const first = await (await (method === 'GET' ? get() : post())).json() as { exampleUrl?: string };
       if (method === 'GET') assert.equal(first.exampleUrl, '');
       else assert.deepEqual(first, { results: [] });
       assert.equal(calls, 2);
       matching = true;
-      const attributed = await (await get()).json();
+      const attributed = await (await get()).json() as { example: string; exampleAuthor: string; exampleUrl: string };
       assert.equal(calls, 4);
       assert.equal(attributed.example, 'I have a dream.');
       assert.equal(attributed.exampleAuthor, 'author');
