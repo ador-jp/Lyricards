@@ -404,3 +404,33 @@ void test('mixed batch keeps cached results when the sentence service fails and 
   assert.deepEqual(await (await GET(new Request('https://example.test/api/dictionary?word=dream'))).json(), cached);
   assert.equal(calls, 6);
 });
+
+for (const method of ['GET', 'POST']) {
+  for (const rejected of ['unrelated', 'unsafe']) {
+    void test(`${method} does not cache a generated example when sentences are ${rejected}`, async t => {
+      let matching = false;
+      let calls = 0;
+      t.mock.method(globalThis, 'fetch', async (url: string) => {
+        calls++;
+        return Response.json(url.includes('datamuse') ? dictionary : matching ? sentences : {
+          data: [{ id: 2, text: rejected === 'unrelated' ? 'I see the world.' : 'Tom has a dream.', owner: 'author' }],
+        });
+      });
+      const get = () => GET(new Request('https://example.test/api/dictionary?word=dream'));
+      const post = () => POST(new Request('https://example.test/api/dictionary', { method: 'POST', body: JSON.stringify({ words: ['dream'] }) }));
+      const first = await (await (method === 'GET' ? get() : post())).json();
+      if (method === 'GET') assert.equal(first.exampleUrl, '');
+      else assert.deepEqual(first, { results: [] });
+      assert.equal(calls, 2);
+      matching = true;
+      const attributed = await (await get()).json();
+      assert.equal(calls, 4);
+      assert.equal(attributed.example, 'I have a dream.');
+      assert.equal(attributed.exampleAuthor, 'author');
+      assert.equal(attributed.exampleUrl, 'https://tatoeba.org/en/sentences/show/1');
+      assert.deepEqual(await (await get()).json(), attributed);
+      assert.deepEqual(await (await post()).json(), { results: [attributed] });
+      assert.equal(calls, 4);
+    });
+  }
+}

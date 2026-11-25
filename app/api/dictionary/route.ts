@@ -39,7 +39,7 @@ function readCache(word: string) {
 
 function storeWord(result: ReturnType<typeof makeWord>, sentenceAvailable: boolean, sentences: ReturnType<typeof parseSentencePayload>) {
   const body = JSON.stringify(result);
-  if (result.meanings.length && sentenceAvailable && sentences.length) {
+  if (result.meanings.length && sentenceAvailable && sentences.length && result.exampleUrl) {
     if (cache.size >= CACHE_LIMIT) cache.delete(cache.keys().next().value!);
     cache.set(result.word, { expiresAt: Date.now() + CACHE_TTL, body });
   }
