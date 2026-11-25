@@ -61,13 +61,16 @@ export function selectExample(word: string, sentences: Array<{ id: number; text:
   })[0];
 }
 
+const EED_PAST = new Set(['agreed', 'decreed', 'disagreed', 'freed', 'guaranteed', 'refereed']);
+
 export function dailyFallback(word: string, partOfSpeech: string) {
   if (/^(?:must|should|could|would|might|can|will)$/.test(word)) return `I ${word} finish this before dinner.`;
-  if (word.endsWith('ed')) return `Someone ${word} me after work.`;
-  if (word.endsWith('ing')) return `We talked about ${word} after work.`;
   if (partOfSpeech === 'noun') return `We talked about the ${word} over lunch.`;
   if (partOfSpeech === 'adjective') return `That sounds ${word} to me.`;
   if (partOfSpeech === 'adverb') return `She explained it ${word}.`;
+  if (EED_PAST.has(word)) return `Could you use the word “${word}” in a sentence?`;
+  if (word.endsWith('ed') && !word.endsWith('eed') && /[aeiouy]/.test(word.slice(0, -2))) return `Someone ${word} me after work.`;
+  if (word.endsWith('ing') && /[aeiouy]/.test(word.slice(0, -3))) return `We talked about ${word} after work.`;
   if (partOfSpeech === 'verb') return `I often ${word} when I have time.`;
   return `Could you use the word “${word}” in a sentence?`;
 }

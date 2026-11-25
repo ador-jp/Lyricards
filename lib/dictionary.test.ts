@@ -1,10 +1,21 @@
 import assert from 'node:assert/strict';
-import test, { type TestContext } from 'node:test';
+import test, { beforeEach, type TestContext } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import { runInNewContext } from 'node:vm';
-import { GET, POST } from '../app/api/dictionary/route.ts';
-import { dailyFallback, parseDictionaryPayload, parseSentencePayload } from './vocabulary.ts';
+import { fetchUpstream } from './upstream.ts';
+import { dailyFallback, parseDictionaryPayload, parseSentencePayload, selectExample, selectMeanings } from './vocabulary.ts';
+
+const source = readFileSync(new URL('../app/api/dictionary/route.ts', import.meta.url), 'utf8').replace(/^import .*$/gm, '').replace(/^export /gm, '');
+function createRoutes(now: () => number = Date.now) {
+  return runInNewContext(`${stripTypeScriptTypes(source)}; ({ GET, POST });`, {
+    dailyFallback, parseDictionaryPayload, parseSentencePayload, selectExample, selectMeanings, fetchUpstream,
+    Request, Response, URL, Promise, AbortSignal, Date: { now }, setTimeout,
+    fetch: (...args: Parameters<typeof fetch>) => fetch(...args),
+  }) as typeof import('../app/api/dictionary/route.ts');
+}
+let { GET, POST } = createRoutes();
+beforeEach(() => { ({ GET, POST } = createRoutes()); });
 
 const dictionary = [{ word: 'dream', defs: ['n\tA hope.'], tags: ['n'] }];
 const sentences = { data: [{ id: 1, text: 'I have a dream.', owner: 'author' }] };
@@ -41,7 +52,7 @@ async function lookup(t: TestContext, dictionaryData: unknown, sentenceData: unk
     return Response.json(isDictionary ? dictionaryData : sentenceData);
   });
   try {
-    return await GET(new Request('https://example.test/api/dictionary?word=dream'));
+    return await createRoutes().GET(new Request('https://example.test/api/dictionary?word=dream'));
   } finally {
     fetch.mock.restore();
   }
@@ -119,12 +130,12 @@ void test('batch dictionary leaves missing, malformed and unsafe examples for in
   const request = () => new Request('https://example.test/api/dictionary', { method: 'POST', body: JSON.stringify({ words: ['dream'] }) });
   for (const value of [{ data: [] }, ...invalidSentences, { data: [{ id: 1, text: 'Tom has a dream.' }] }, { data: [{ id: 1, text: 'We have dreams.' }] }]) {
     sentenceData = value;
-    assert.deepEqual(await (await POST(request())).json(), { results: [] });
+    assert.deepEqual(await (await createRoutes().POST(request())).json(), { results: [] });
   }
   sentenceData = sentences;
   for (const value of [[], ...invalidDictionaries, [{ word: 'dream' }]]) {
     dictionaryData = value;
-    assert.deepEqual(await (await POST(request())).json(), { results: [] });
+    assert.deepEqual(await (await createRoutes().POST(request())).json(), { results: [] });
   }
 });
 
@@ -213,7 +224,7 @@ void test('client skips empty lists and bounds batch sizes', async () => {
   assert.deepEqual(calls, [20, 20, 1]);
 });
 
-for (const failure of ['http', 'timeout', 'empty', 'malformed']) {
+for (const failure of ['http', 'timeout', 'empty', 'malformed', 'partial']) {
   void test(`client ${failure} batch failure disables batches and restores four GET workers`, async () => {
     let posts = 0; let active = 0; let peak = 0;
     const waits: number[] = [];
@@ -233,6 +244,7 @@ for (const failure of ['http', 'timeout', 'empty', 'malformed']) {
         if (url === '/api/dictionary') {
           posts++;
           if (failure === 'timeout') throw new Error('Timeout');
+          if (failure === 'partial') return Response.json({ unavailable: true, results: [{ word: 'word0', meanings: ['A meaning.'], partOfSpeech: 'noun', exampleUrl: 'https://tatoeba.org/en/sentences/show/1' }] });
           return Response.json(failure === 'malformed' ? null : { results: [] }, { status: failure === 'http' ? 502 : 200 });
         }
         active++; peak = Math.max(peak, active);
@@ -245,7 +257,7 @@ for (const failure of ['http', 'timeout', 'empty', 'malformed']) {
     assert.equal(posts, 1);
     assert.equal(peak, 4);
     assert.deepEqual(waits.slice(0, 3), [1_100, 2_200, 3_300]);
-    assert.equal(waits.length, 29);
+    assert.equal(waits.length, failure === 'partial' ? 28 : 29);
     assert.deepEqual(timeouts, [3_500]);
     assert.equal(Object.keys(details).length, 30);
     assert.match(statuses.at(-1)!, /^30語の意味と例文を取得しました/);
@@ -294,3 +306,101 @@ for (const staleAt of ['batch', 'json', 'get', 'pace']) {
     assert.deepEqual(loading, [true]);
   });
 }
+
+void test('dictionary cache reuses successful lookups, expires, and does not cache errors or empty results', async t => {
+  let calls = 0;
+  let now = 0;
+  let mode = 'valid';
+  const get = createRoutes(() => now).GET;
+  t.mock.method(globalThis, 'fetch', async (url: string) => {
+      calls += 1;
+      return Response.json(url.includes('datamuse')
+        ? mode === 'error' ? null : mode === 'empty' ? [] : mode === 'mismatch' ? [{ ...dictionary[0], word: 'dreamy' }] : dictionary
+        : sentences);
+  });
+  const request = (word = 'dream') => new Request(`https://example.test/api/dictionary?word=${word}`);
+  const first = await get(request());
+  const second = await get(request('DREAM'));
+  assert.deepEqual(await second.json(), await first.json());
+  assert.equal(calls, 2);
+  assert.equal((await get(request('123'))).status, 400);
+  assert.equal(calls, 2);
+  now += 3_600_001;
+  await get(request());
+  assert.equal(calls, 4);
+  for (const nextMode of ['error', 'empty', 'mismatch']) {
+    mode = nextMode;
+    now += 3_600_001;
+    const before: number = calls;
+    for (let i = 0; i < 2; i += 1) assert.equal((await get(request())).status, mode === 'error' ? 502 : 200);
+    assert.equal(calls, before + 4);
+  }
+});
+
+void test('GET and POST share cached words, query only misses, and expire batch results', async t => {
+  let now = 0;
+  const routes = createRoutes(() => now);
+  const urls: URL[] = [];
+  t.mock.method(globalThis, 'fetch', async (url: string) => {
+    const parsed = new URL(url);
+    urls.push(parsed);
+    return Response.json(parsed.hostname === 'api.tatoeba.org'
+      ? { data: [...sentences.data, { id: 2, text: 'I see the world.', owner: 'author' }] }
+      : [{ ...dictionary[0], word: parsed.searchParams.get('sp') }]);
+  });
+  const post = (words: string[]) => routes.POST(new Request('https://example.test/api/dictionary', { method: 'POST', body: JSON.stringify({ words }) }));
+  const dream = await (await routes.GET(new Request('https://example.test/api/dictionary?word=dream'))).json();
+  assert.equal(urls.length, 2);
+  const mixed = await (await post(['WORLD', 'DREAM', 'world'])).json() as { results: Array<{ word: string }> };
+  assert.deepEqual(mixed.results.map(result => result.word), ['world', 'dream']);
+  assert.deepEqual(mixed.results[1], dream);
+  assert.equal(urls.length, 4);
+  assert.equal(urls[2].searchParams.get('q'), '(world) (I | you | we | they | please | can | could | would)');
+  assert.equal(urls[3].searchParams.get('sp'), 'world');
+  assert.deepEqual(await (await routes.GET(new Request('https://example.test/api/dictionary?word=world'))).json(), mixed.results[0]);
+  assert.deepEqual(await (await post(['world', 'dream'])).json(), mixed);
+  assert.equal(urls.length, 4);
+  now += 3_600_001;
+  assert.deepEqual(await (await post(['world', 'dream'])).json(), mixed);
+  assert.equal(urls.length, 7);
+});
+
+void test('batch cache excludes missing meanings, missing sentences, malformed data and unavailable upstreams', async t => {
+  let calls = 0;
+  let mode = '';
+  t.mock.method(globalThis, 'fetch', async (url: string) => {
+    calls++;
+    if (url.includes('datamuse')) return Response.json(mode === 'meanings' ? [{ word: 'dream' }] : mode === 'dictionary' ? null : dictionary);
+    if (mode === 'unavailable') return new Response('', { status: 503 });
+    return Response.json(mode === 'empty' ? { data: [] } : mode === 'malformed' ? null : sentences);
+  });
+  for (mode of ['meanings', 'dictionary', 'empty', 'malformed', 'unavailable']) {
+    const routes = createRoutes();
+    const before: number = calls;
+    for (let i = 0; i < 2; i++) {
+      const response = await routes.POST(new Request('https://example.test/api/dictionary', { method: 'POST', body: JSON.stringify({ words: ['dream'] }) }));
+      assert.equal(response.status, mode === 'unavailable' ? 502 : 200);
+      if (response.ok) assert.deepEqual(await response.json(), { results: [] });
+    }
+    assert.equal(calls, before + 4);
+  }
+});
+
+void test('mixed batch keeps cached results when the sentence service fails and does not cache the misses', async t => {
+  let unavailable = false;
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async (url: string) => {
+    calls++;
+    if (url.includes('datamuse')) return Response.json([{ ...dictionary[0], word: new URL(url).searchParams.get('sp') }]);
+    return unavailable ? new Response('', { status: 503 }) : Response.json(sentences);
+  });
+  const cached = await (await GET(new Request('https://example.test/api/dictionary?word=dream'))).json();
+  unavailable = true;
+  const post = (words: string[]) => POST(new Request('https://example.test/api/dictionary', { method: 'POST', body: JSON.stringify({ words }) }));
+  assert.deepEqual(await (await post(['dream', 'world'])).json(), { results: [cached], unavailable: true });
+  assert.equal(calls, 4);
+  assert.equal((await post(['world'])).status, 502);
+  assert.equal(calls, 6);
+  assert.deepEqual(await (await GET(new Request('https://example.test/api/dictionary?word=dream'))).json(), cached);
+  assert.equal(calls, 6);
+});

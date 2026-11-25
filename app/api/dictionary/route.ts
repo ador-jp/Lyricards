@@ -1,6 +1,10 @@
 import { fetchUpstream } from '../../../lib/upstream.ts';
 import { dailyFallback, parseDictionaryPayload, parseSentencePayload, selectExample, selectMeanings } from '../../../lib/vocabulary.ts';
 
+const cache = new Map<string, { expiresAt: number; body: string }>();
+const CACHE_TTL = 60 * 60 * 1000;
+const CACHE_LIMIT = 500;
+
 function delay(ms: number) {
   const { promise, resolve } = Promise.withResolvers<void>();
   setTimeout(resolve, ms);
@@ -10,6 +14,8 @@ function delay(ms: number) {
 export async function GET(request: Request) {
   const word = new URL(request.url).searchParams.get('word')?.toLowerCase();
   if (!word || !/^[a-z]+(?:'[a-z]+)?$/.test(word)) return Response.json({ error: 'Invalid word' }, { status: 400 });
+  const cached = readCache(word);
+  if (cached) return new Response(cached, { headers: { 'content-type': 'application/json' } });
 
   const [dictionaryResult, sentenceResult] = await Promise.all([
     getJson(`https://api.datamuse.com/words?sp=${encodeURIComponent(word)}&qe=sp&md=dp&max=1`),
@@ -20,7 +26,24 @@ export async function GET(request: Request) {
     return Response.json({ error: 'Dictionary service unavailable' }, { status: 502 });
   }
 
-  return Response.json(makeWord(word, entries[0], parseSentencePayload(sentenceResult.data)));
+  const sentences = parseSentencePayload(sentenceResult.data);
+  const body = storeWord(makeWord(word, entries[0], sentences), sentenceResult.available, sentences);
+  return new Response(body, { headers: { 'content-type': 'application/json' } });
+}
+
+function readCache(word: string) {
+  const cached = cache.get(word);
+  if (cached && cached.expiresAt > Date.now()) return cached.body;
+  cache.delete(word);
+}
+
+function storeWord(result: ReturnType<typeof makeWord>, sentenceAvailable: boolean, sentences: ReturnType<typeof parseSentencePayload>) {
+  const body = JSON.stringify(result);
+  if (result.meanings.length && sentenceAvailable && sentences.length) {
+    if (cache.size >= CACHE_LIMIT) cache.delete(cache.keys().next().value!);
+    cache.set(result.word, { expiresAt: Date.now() + CACHE_TTL, body });
+  }
+  return body;
 }
 
 async function getJson(url: string, signal?: AbortSignal) {
@@ -66,7 +89,19 @@ export async function POST(request: Request) {
     || !values.every((word): word is string => typeof word === 'string' && word.length <= 100 && /^[a-z]+(?:'[a-z]+)?$/i.test(word))) {
     return Response.json({ error: 'Invalid words' }, { status: 400 });
   }
-  const words = [...new Set(values.map(word => word.toLowerCase()))];
+  const allWords = [...new Set(values.map(word => word.toLowerCase()))];
+  const results = new Map<string, ReturnType<typeof makeWord>>();
+  const words = allWords.filter(word => {
+    const cached = readCache(word);
+    if (!cached) return true;
+    results.set(word, JSON.parse(cached) as ReturnType<typeof makeWord>);
+    return false;
+  });
+  const respond = (unavailable = false) => Response.json({
+    results: allWords.flatMap(word => results.has(word) ? [results.get(word)!] : []),
+    ...(unavailable ? { unavailable: true } : {}),
+  });
+  if (!words.length) return respond();
   const signal = AbortSignal.any([request.signal, AbortSignal.timeout(3_000)]);
   const query = `(${words.join(' | ')}) (I | you | we | they | please | can | could | would)`;
   const sentencesPending = getJson(`https://api.tatoeba.org/v1/sentences?lang=eng&q=${encodeURIComponent(query)}&is_unapproved=no&is_orphan=no&word_count=4-12&sort=relevance&limit=500`, signal);
@@ -79,14 +114,15 @@ export async function POST(request: Request) {
     }
   }));
   const sentenceResult = await sentencesPending;
-  if (!sentenceResult.available) return Response.json({ error: 'Sentence service unavailable' }, { status: 502 });
+  if (!sentenceResult.available) return results.size ? respond(true) : Response.json({ error: 'Sentence service unavailable' }, { status: 502 });
   const sentences = parseSentencePayload(sentenceResult.data);
-  const results = words.flatMap(word => {
+  for (const word of words) {
     const dictionary = dictionaries.get(word);
     const entries = dictionary?.available ? parseDictionaryPayload(dictionary.data) : null;
-    if (!entries) return [];
+    if (!entries) continue;
     const result = makeWord(word, entries[0], sentences);
-    return result.meanings.length && result.partOfSpeech && result.exampleUrl ? [result] : [];
-  });
-  return Response.json({ results });
+    storeWord(result, sentenceResult.available, sentences);
+    if (result.meanings.length && result.partOfSpeech && result.exampleUrl) results.set(word, result);
+  }
+  return respond();
 }
