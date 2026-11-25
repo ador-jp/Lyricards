@@ -82,3 +82,37 @@ void test('dictionary route preserves valid responses and uses fallback for inva
     word: 'dream', meanings: [], partOfSpeech: '', example: dailyFallback('dream', ''), exampleAuthor: '', exampleUrl: '',
   });
 });
+
+void test('dictionary cache reuses successful lookups, expires, and does not cache errors or empty results', async () => {
+  let calls = 0;
+  let now = 0;
+  let mode = 'valid';
+  const get = runInNewContext(`${stripTypeScriptTypes(source)}; GET`, {
+    dailyFallback, parseDictionaryPayload, parseSentencePayload, selectExample, selectMeanings,
+    Request, Response, URL, Promise, Date: { now: () => now },
+    setTimeout: (callback: () => void) => { callback(); },
+    fetch: async (url: string) => {
+      calls += 1;
+      return { ok: true, json: async () => url.includes('datamuse')
+        ? mode === 'error' ? null : mode === 'empty' ? [] : mode === 'mismatch' ? [{ ...dictionary[0], word: 'dreamy' }] : dictionary
+        : sentences };
+    },
+  }) as (request: Request) => Promise<Response>;
+  const request = (word = 'dream') => new Request(`https://example.test/api/dictionary?word=${word}`);
+  const first = await get(request());
+  const second = await get(request('DREAM'));
+  assert.deepEqual(await second.json(), await first.json());
+  assert.equal(calls, 2);
+  assert.equal((await get(request('123'))).status, 400);
+  assert.equal(calls, 2);
+  now += 3_600_001;
+  await get(request());
+  assert.equal(calls, 4);
+  for (const nextMode of ['error', 'empty', 'mismatch']) {
+    mode = nextMode;
+    now += 3_600_001;
+    const before: number = calls;
+    for (let i = 0; i < 2; i += 1) assert.equal((await get(request())).status, mode === 'error' ? 502 : 200);
+    assert.equal(calls, before + 4);
+  }
+});
