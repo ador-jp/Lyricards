@@ -16,6 +16,7 @@ type Song = { trackId: number; trackName: string; artistName: string; artworkUrl
 const ownerChangedMessage = 'ブラウザの保存先が変わりました。入力を残したまま再試行できます。';
 const invalidEntryMessage = '単語帳の内容やサイズが保存条件を満たしていません。歌詞を短くするなど、内容を確認して再試行してください。';
 const pendingSaveMessage = 'このブラウザに一時保存しました。接続が戻るとサーバーへの保存を再試行します。';
+const isPendingSaveStatus = (status: string) => status === pendingSaveMessage || status.endsWith(`」: ${pendingSaveMessage}`);
 const rejectedSaveMessage = '保存を拒否された単語帳は「未保存（拒否）」としてこのブラウザに残しています。自動再試行はしません。CSVに書き出して内容を確認できます。';
 
 function ensureEntryOwner() {
@@ -122,7 +123,7 @@ export default function Home() {
               if (readEntryOwner(document.cookie) !== owner) return;
               setSyncWarning(rejectedSaveMessage);
               setRejected(current => mergeEntries(current, [entry]));
-              setStatus(current => current === pendingSaveMessage ? '' : current);
+              setStatus(current => isPendingSaveStatus(current) ? '' : current);
             },
             fetchRemote: async () => {
               const response = await fetch('/api/entries', { headers: { [ENTRY_OWNER_HEADER]: owner }, signal });
@@ -145,7 +146,7 @@ export default function Home() {
             },
           });
           if (!signal.aborted && readEntryOwner(document.cookie) === owner && !readPendingEntries(localStorage, owner).length) {
-            setStatus(current => current === pendingSaveMessage ? '一時保存していた単語帳をサーバーに保存しました。' : current);
+            setStatus(current => isPendingSaveStatus(current) ? '一時保存していた単語帳をサーバーに保存しました。' : current);
           }
         }
       } catch {
@@ -228,21 +229,22 @@ export default function Home() {
     const owner = ensureEntryOwner();
     if (!owner) return setStatus('保存するには、このブラウザで Cookie を有効にしてください。');
     setSaving(true); setStatus('保存中…');
+    const report = (message: string) => setStatus(geniusRequest.current === requestId ? message : `「${entry.song}」: ${message}`);
     let savedRemotely = false;
     try {
       const response = await postEntry(entry, owner);
       if (response.status === 412) {
-        setStatus(ownerChangedMessage);
+        report(ownerChangedMessage);
         setSaving(false);
         return;
       }
       if (response.status === 400) {
-        setStatus(invalidEntryMessage);
+        report(invalidEntryMessage);
         setSaving(false);
         return;
       }
       if (response.status === 409) {
-        setStatus('この単語帳はすでに保存されています。保存済みの単語帳を確認してください。');
+        report('この単語帳はすでに保存されています。保存済みの単語帳を確認してください。');
         setSaving(false);
         return;
       }
@@ -251,26 +253,26 @@ export default function Home() {
       // Fall back to browser storage when the server is unavailable.
     }
     if (readEntryOwner(document.cookie) !== owner) {
-      setStatus(ownerChangedMessage);
+      report(ownerChangedMessage);
       setSaving(false);
       return;
     }
     if (!savedRemotely && !savePendingEntry(owner, entry)) {
-      setStatus('サーバーにもこのブラウザにも保存できませんでした。入力を残したまま再試行できます。');
+      report('サーバーにもこのブラウザにも保存できませんでした。入力を残したまま再試行できます。');
       setSaving(false);
       return;
     }
     if (savedRemotely) { cacheServerEntries(owner, [entry]); setSyncWarning(''); }
     setHistory(current => ({ owner, entries: mergeEntries([entry], current.owner === owner ? current.entries : []) }));
+    report(savedRemotely
+      ? `${savedWordCount}語を保存しました。続けて次の曲を検索できます。`
+      : pendingSaveMessage);
     if (geniusRequest.current === requestId) {
       setQuery(''); setSongs([]); setSearchStatus('');
       geniusRequest.current += 1;
       setSelected(null); setLyrics(''); setDetails({}); setLoading(false);
       setGeniusUrl(''); setGeniusStatus(''); setGeniusLoading(false);
     }
-    setStatus(savedRemotely
-      ? `${savedWordCount}語を保存しました。続けて次の曲を検索できます。`
-      : pendingSaveMessage);
     setSaving(false);
   }
 
