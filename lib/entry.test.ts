@@ -443,3 +443,26 @@ void test('GET skips unreadable stored entries and returns a controlled error wh
   assert.equal(failure.headers.get('cache-control'), 'private, no-store');
   assert.equal(typeof (await failure.json()).error, 'string');
 });
+
+void test('a song search answered after the query was edited does not show its results or keep the button disabled', async () => {
+  const source = readFileSync(new URL('../app/page.tsx', import.meta.url), 'utf8');
+  const searchSongs = source.slice(source.indexOf('  async function searchSongs('), source.indexOf('  async function save()'));
+  assert.match(source, /onChange=\{e => \{ searchRequest\.current \+= 1; setSearching\(false\);/);
+  for (const [edited, ok] of [[false, true], [true, true], [false, false], [true, false]] as const) {
+    const calls: Record<string, unknown[]> = { setSongs: [], setSearchStatus: [], setSearching: [] };
+    const searchRequest = { current: 0 };
+    const state: Record<string, unknown> = {
+      query: 'yesterday', searchRequest, encodeURIComponent,
+      fetch: async () => {
+        if (edited) searchRequest.current += 1;
+        if (!ok) throw new TypeError('Offline');
+        return Response.json({ results: [{ trackId: 1, trackName: 'Yesterday', artistName: 'The Beatles', artworkUrl100: '', trackViewUrl: '' }] });
+      },
+    };
+    for (const name of Object.keys(calls)) state[name] = (value: unknown) => { calls[name].push(value); };
+    await runInNewContext(`${stripTypeScriptTypes(searchSongs)}; searchSongs({ preventDefault() {} });`, state);
+    assert.deepEqual(calls.setSearching, edited ? [true] : [true, false]);
+    assert.equal(calls.setSongs.length, edited || !ok ? 0 : 1);
+    assert.deepEqual(calls.setSearchStatus, edited ? ['検索中…'] : ['検索中…', ok ? '' : '曲の検索サービスに接続できませんでした。少し待って再試行してください。']);
+  }
+});

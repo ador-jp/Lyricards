@@ -83,6 +83,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const geniusRequest = useRef(0);
+  const searchRequest = useRef(0);
   const learned = useMemo(() => learnedWords(entries, rejected), [entries, rejected]);
   const baseWords = useMemo(() => extractWords(lyrics, excludeLearned ? learned : new Set()), [lyrics, excludeLearned, learned]);
   const words = useMemo(() => baseWords.map(item => ({ ...item, ...details[item.word], example: details[item.word]?.example || item.example })), [baseWords, details]);
@@ -202,18 +203,21 @@ export default function Home() {
     e.preventDefault();
     const term = query.trim();
     if (term.length < 2) return setSearchStatus('2文字以上入力してください。');
+    const requestId = ++searchRequest.current;
+    const isCurrent = () => searchRequest.current === requestId;
     setSearching(true); setSearchStatus('検索中…');
     try {
       const response = await fetch(`/api/songs?q=${encodeURIComponent(term)}`);
       if (!response.ok) throw new Error();
       const payload = await response.json() as { results?: Song[] };
       if (!Array.isArray(payload.results)) throw new Error();
+      if (!isCurrent()) return;
       setSongs(payload.results);
       setSearchStatus(payload.results.length ? '' : '候補が見つかりませんでした。');
     } catch {
-      setSearchStatus('曲の検索サービスに接続できませんでした。少し待って再試行してください。');
+      if (isCurrent()) setSearchStatus('曲の検索サービスに接続できませんでした。少し待って再試行してください。');
     } finally {
-      setSearching(false);
+      if (isCurrent()) setSearching(false);
     }
   }
 
@@ -385,7 +389,7 @@ export default function Home() {
     <div className="mx-auto grid max-w-7xl gap-4 px-3 py-4 sm:gap-6 sm:px-5 sm:py-7 lg:grid-cols-[minmax(0,1fr)_360px]">
       <section className="space-y-6">
         <div className="panel"><div className="step"><span>1</span><div><h2>曲を探す</h2><p>曲名またはアーティスト名を入力して検索します。</p></div></div>
-          <form onSubmit={searchSongs} className="mt-5 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"><Input aria-label="曲名またはアーティスト" value={query} onChange={e => { setQuery(e.target.value); setSongs([]); setSearchStatus(''); }} placeholder="曲名またはアーティスト名" autoComplete="off" enterKeyHint="search" className="h-11"/><Button type="submit" disabled={searching} className="h-11 w-full gap-2 sm:w-auto">{searching ? <LoaderCircle className="animate-spin" size={16}/> : <Search size={17}/>} {searching ? '検索中…' : '検索'}</Button></form>
+          <form onSubmit={searchSongs} className="mt-5 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"><Input aria-label="曲名またはアーティスト" value={query} onChange={e => { searchRequest.current += 1; setSearching(false); setQuery(e.target.value); setSongs([]); setSearchStatus(''); }} placeholder="曲名またはアーティスト名" autoComplete="off" enterKeyHint="search" className="h-11"/><Button type="submit" disabled={searching} className="h-11 w-full gap-2 sm:w-auto">{searching ? <LoaderCircle className="animate-spin" size={16}/> : <Search size={17}/>} {searching ? '検索中…' : '検索'}</Button></form>
           {searchStatus && <output className="mt-2 block text-sm text-muted-foreground">{searchStatus}</output>}
           {songs.length > 0 && <div className="mt-4"><p className="mb-2 text-xs font-semibold text-muted-foreground">候補</p><div className="grid gap-2 sm:grid-cols-2">
             {songs.map(song => <button type="button" key={song.trackId} aria-label={`${song.trackName} ${song.artistName}`} onClick={() => void selectSong(song)} className={`song w-full touch-manipulation ${selected?.trackId === song.trackId ? 'selected' : ''}`}>
